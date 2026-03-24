@@ -7,6 +7,11 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@300;400;500&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 <script src="docx.umd.js"></script>
 <script src="FileSaver.min.js"></script>
+<script>
+  // Debug: find what global the docx library registered as
+  console.log('docx global check:', typeof docx, typeof window.docx);
+  console.log('docx keys sample:', Object.keys(window).filter(k => ['docx','Docx','DOCX','Document','Packer'].includes(k)));
+</script>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -838,8 +843,15 @@ async function generateContract() {
       : `${fmtDate(accessStartDate)} – ${fmtDate(accessEndDate)}`;
 
     // ── docx helpers ──
-    if (typeof docx === 'undefined') {
-      setStatus('error', 'Document library failed to load. Please hard-refresh (Cmd+Shift+R) and try again.');
+    // Try multiple ways the library might be exposed
+    const docxLib = typeof docx !== 'undefined' ? docx
+      : typeof window.docx !== 'undefined' ? window.docx
+      : null;
+
+    if (!docxLib) {
+      // Log what's available to help debug
+      const globals = Object.keys(window).filter(k => k.toLowerCase().includes('doc') || k.toLowerCase().includes('pack'));
+      setStatus('error', `Document library not found. Check that docx.umd.js is in your repo root. (Available: ${globals.join(', ') || 'none'})`);
       btn.disabled = false;
       return;
     }
@@ -847,7 +859,7 @@ async function generateContract() {
       Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
       AlignmentType, BorderStyle, WidthType, ShadingType, HeadingLevel,
       LevelFormat, Header, Footer, PageNumber, TabStopType, TabStopPosition
-    } = docx;
+    } = docxLib;
 
     const DARK   = "1A1A2E";
     const ACCENT = "0F3460";
