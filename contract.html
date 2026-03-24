@@ -1347,8 +1347,20 @@ async function generateContract() {
 
   // ── From quote data ──
   if (quote) {
-    if (quote.grandTotal)  set('rentalFee', Math.round(quote.grandTotal));
-    if (quote.deposit)     set('securityDeposit', quote.deposit);
+    if (quote.grandTotal) set('rentalFee', Math.round(quote.grandTotal));
+    if (quote.deposit) {
+      if (quote.depType === 'refundable') {
+        // Refundable deposit is separate from and on top of the rental fee
+        set('securityDeposit', quote.deposit);
+      } else if (quote.depType === 'non-refundable') {
+        // Non-refundable deposit is already credited against the total in the quote —
+        // clear the security deposit field and note it in additional notes instead
+        set('securityDeposit', 0);
+        const existing = document.getElementById('additionalNotes')?.value?.trim() || '';
+        const note = `A non-refundable deposit of $${Math.round(quote.deposit).toLocaleString('en-US')} is required at signing and will be credited toward the total rental fee.`;
+        set('additionalNotes', existing ? existing + '\n\n' + note : note);
+      }
+    }
   }
 
   updateSummary();
