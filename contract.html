@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>170 Eldridge — Contract Generator</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@300;400;500&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/docx/8.5.0/docx.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/docx/7.8.2/docx.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -838,6 +838,11 @@ async function generateContract() {
       : `${fmtDate(accessStartDate)} – ${fmtDate(accessEndDate)}`;
 
     // ── docx helpers ──
+    if (typeof docx === 'undefined') {
+      setStatus('error', 'Document library failed to load. Please hard-refresh (Cmd+Shift+R) and try again.');
+      btn.disabled = false;
+      return;
+    }
     const {
       Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
       AlignmentType, BorderStyle, WidthType, ShadingType, HeadingLevel,
