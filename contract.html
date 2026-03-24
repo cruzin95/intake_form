@@ -1175,6 +1175,30 @@ async function generateContract() {
   const inq   = prefill.inquiry;
   const quote = prefill.quote || null;
 
+  // ── If a saved contract state exists, restore it and skip fresh prefill ──
+  if (prefill.contractState) {
+    const cs = prefill.contractState;
+    Object.entries(cs.fields || {}).forEach(([id, val]) => {
+      const el = document.getElementById(id); if (el) el.value = val;
+    });
+    Object.entries(cs.toggles || {}).forEach(([id, val]) => {
+      const el = document.getElementById(id); if (el) el.checked = val;
+    });
+    // Show hub elements
+    const banner = document.getElementById('prefill-banner-c');
+    if (banner) banner.style.display = 'flex';
+    const refEl = document.getElementById('prefill-ref-c');
+    if (refEl) refEl.textContent = inq.refId;
+    const nameEl = document.getElementById('prefill-name-c');
+    if (nameEl) nameEl.textContent = `${inq.firstName} ${inq.lastName}`.trim();
+    const backBtn = document.getElementById('back-btn-c');
+    if (backBtn) backBtn.style.display = '';
+    const markBtn = document.getElementById('mark-contracted-btn');
+    if (markBtn) markBtn.style.display = 'flex';
+    updateSummary();
+    return;
+  }
+
   // Show hub UI elements
   const banner = document.getElementById('prefill-banner-c');
   if (banner) banner.style.display = 'flex';
@@ -1313,10 +1337,34 @@ async function generateContract() {
   updateSummary();
 })();
 
+function captureContractState() {
+  const ids = ['clientNames','clientAddress','clientEmail','clientPhone',
+    'agreementDate','eventDescription',
+    'accessStartDate','accessStartTime','accessEndDate','accessEndTime',
+    'doorsOpenDate','doorsOpenTime','doorsCloseDate','doorsCloseTime',
+    'maxGuests','maxRooftop',
+    'rentalFee','securityDeposit','paymentDueDate','depositReturnDate','paymentMethod',
+    'noiseLimit','insuranceDeadline','additionalNotes'];
+  const state = { fields: {}, toggles: {} };
+  ids.forEach(id => { const el = document.getElementById(id); if (el) state.fields[id] = el.value; });
+  ['rooftopAllowed','smokingRooftop','confAddress','clientDoorStaff'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) state.toggles[id] = el.checked;
+  });
+  return state;
+}
+
 function markContractedAndReturn() {
   const raw = sessionStorage.getItem('170e_prefill');
   if (!raw) { window.location.href = 'index.html'; return; }
-  const { rowIndex, refId } = JSON.parse(raw);
+  const prefill = JSON.parse(raw);
+  const { rowIndex, refId } = prefill;
+
+  // Save contract state back into prefill so hub can restore it if user returns
+  const contractState = captureContractState();
+  prefill.contractState = contractState;
+  sessionStorage.setItem('170e_prefill', JSON.stringify(prefill));
+
   sessionStorage.setItem('170e_contract_result', JSON.stringify({ rowIndex, refId }));
   window.location.href = 'index.html';
 }

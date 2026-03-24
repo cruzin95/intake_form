@@ -252,8 +252,8 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--ink);min-
 const CONFIG = {
   CLIENT_ID: '515515941640-qvbv3p5mm8j5rt0mkqilgu8sfo2cplmu.apps.googleusercontent.com',
   SHEET_ID:  '10z_FdC74leDuRG8-CR7U4IFzWOM4-1wNueM9D3Dmn3Q',
-  TAB:       'Inquiries',     // change if your tab is named differently
-  HAS_HEADERS: true,       // set false if sheet has no header row
+  TAB:       'Inquiries',
+  HAS_HEADERS: true,
 };
 
 // Column indices (0-based). Must match your Apps Script column order.
@@ -265,11 +265,11 @@ const COL = {
   servicesNeeded:15, outsideVendors:16, guestMethod:17, publicEvent:18,
   alcohol:19, ageReq:20, insurance:21, budget:22, payMethod:23, notes:24,
   // Hub-managed columns (written by this dashboard):
-  status:25, quoteTotal:26, quoteData:27, contractGenerated:28,
+  status:25, quoteTotal:26, quoteData:27, contractGenerated:28, lastUpdatedBy:29,
 };
 // ═══════════════════════════════════════════════════════════════════════
 
-let tokenClient, accessToken = null, inquiries = [], selected = null;
+let tokenClient, accessToken = null, currentUserEmail = '', inquiries = [], selected = null;
 
 // ── INIT ──────────────────────────────────────────────────────────────
 
@@ -281,6 +281,8 @@ window.addEventListener('load', () => {
   const saved = sessionStorage.getItem('170e_token');
   if (saved) {
     accessToken = saved;
+    currentUserEmail = sessionStorage.getItem('170e_user') || '';
+    if (currentUserEmail) document.getElementById('user-chip').textContent = currentUserEmail;
     showApp();
     loadInquiries();
   }
@@ -307,6 +309,14 @@ function onToken(resp) {
   if (resp.error) { showAuthError('Sign-in failed: ' + resp.error); return; }
   accessToken = resp.access_token;
   sessionStorage.setItem('170e_token', accessToken);
+  // Fetch user info for "last updated by"
+  fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  }).then(r => r.json()).then(info => {
+    currentUserEmail = info.email || '';
+    sessionStorage.setItem('170e_user', currentUserEmail);
+    document.getElementById('user-chip').textContent = currentUserEmail;
+  }).catch(() => {});
   showApp();
   loadInquiries();
 }
@@ -400,6 +410,7 @@ function parseRow(row, rowIndex) {
     quoteTotal:      row[COL.quoteTotal]       || '',
     quoteData:       safeJson(row[COL.quoteData]),
     contractGenerated: row[COL.contractGenerated] || '',
+    lastUpdatedBy:   row[COL.lastUpdatedBy]    || '',
   };
 }
 
@@ -411,8 +422,8 @@ function colLetter(idx) {
 }
 
 async function writeRow(rowIndex, values) {
-  const startLetter = colLetter(COL.status); // 'Z'
-  const endLetter   = colLetter(COL.contractGenerated); // 'AC'
+  const startLetter = colLetter(COL.status);       // Z
+  const endLetter   = colLetter(COL.lastUpdatedBy); // AD
   const range = encodeURIComponent(`${CONFIG.TAB}!${startLetter}${rowIndex}:${endLetter}${rowIndex}`);
   const url   = `https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SHEET_ID}/values/${range}?valueInputOption=RAW`;
 
@@ -442,7 +453,7 @@ async function flushPendingWrites() {
   const pq = sessionStorage.getItem('170e_pending_quote');
   if (pq && accessToken) {
     const { rowIndex, refId, grandTotal, quoteDataJson } = JSON.parse(pq);
-    const ok = await writeRow(rowIndex, ['quoted', grandTotal, quoteDataJson, '']);
+    const ok = await writeRow(rowIndex, ['quoted', grandTotal, quoteDataJson, '', currentUserEmail]);
     if (ok) {
       sessionStorage.removeItem('170e_pending_quote');
       // Update in-memory
@@ -457,7 +468,7 @@ async function flushPendingWrites() {
     const inq = inquiries.find(i => i.rowIndex === rowIndex || i.refId === refId);
     const qt = inq?.quoteTotal || '';
     const qd = inq?.quoteData ? JSON.stringify(inq.quoteData) : '';
-    const ok = await writeRow(rowIndex, ['contracted', qt, qd, 'true']);
+    const ok = await writeRow(rowIndex, ['contracted', qt, qd, 'true', currentUserEmail]);
     if (ok) {
       sessionStorage.removeItem('170e_pending_contract');
       if (inq) { inq.status = 'contracted'; inq.contractGenerated = 'true'; }
@@ -512,6 +523,7 @@ function renderCard(inq) {
       <span>${inq.guestCount || '?'} guests</span>
     </div>
     ${hasQt ? `<div class="card-quote-total">$${Number(inq.quoteTotal).toLocaleString()}</div>` : ''}
+    ${inq.lastUpdatedBy ? `<div style="font-size:.65rem;color:var(--muted);margin-top:6px;padding-top:6px;border-top:1px solid var(--border);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">↳ ${escHtml(inq.lastUpdatedBy)}</div>` : ''}
   </div>`;
 }
 
@@ -589,6 +601,8 @@ function renderDetailBody(inq) {
 
     ${inq.notes ? `<div class="d-section"><div class="d-section-title">Notes</div><div class="d-notes">${escHtml(inq.notes)}</div></div>` : ''}
 
+    ${inq.lastUpdatedBy ? `<div class="d-section"><div class="d-section-title">Activity</div>${row('Last updated by', escHtml(inq.lastUpdatedBy))}</div>` : ''}
+
     ${hasQt ? `
     <div class="d-section">
       <div class="d-section-title">Quote on file</div>
@@ -617,6 +631,7 @@ async function changeStatus() {
     inq.quoteTotal || '',
     inq.quoteData ? JSON.stringify(inq.quoteData) : '',
     inq.contractGenerated || '',
+    currentUserEmail,
   ]);
 
   if (ok) {
@@ -646,6 +661,11 @@ function goToQuote() {
 
 function goToContract() {
   if (!selected) return;
+  const existing = sessionStorage.getItem('170e_prefill');
+  let contractState = null;
+  if (existing) {
+    try { contractState = JSON.parse(existing).contractState || null; } catch {}
+  }
   sessionStorage.setItem('170e_prefill', JSON.stringify({
     source: 'hub',
     refId: selected.refId,
@@ -653,6 +673,7 @@ function goToContract() {
     inquiry: selected,
     quote: selected.quoteData,
     token: accessToken,
+    contractState,
   }));
   window.location.href = 'contract.html';
 }

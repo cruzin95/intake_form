@@ -6,6 +6,7 @@
 <title>170 Eldridge — Quote Builder</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -154,6 +155,23 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--ink);min-
   .section{border:1px solid #e2e2ea;margin-bottom:12px}
 }
 
+/* ── INTAKE PANEL ── */
+.intake-overlay{position:fixed;inset:0;background:rgba(15,15,18,.4);z-index:200;display:flex;justify-content:flex-end;backdrop-filter:blur(1px)}
+.intake-overlay.hidden{display:none}
+.intake-panel{width:380px;max-width:100%;height:100%;background:var(--card);display:flex;flex-direction:column;overflow:hidden;box-shadow:-6px 0 24px rgba(0,0,0,.12)}
+.intake-header{padding:18px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:var(--accent);flex-shrink:0}
+.intake-title{font-family:'DM Serif Display',serif;font-size:1rem;color:#fff;font-weight:400}
+.intake-sub{font-family:'DM Mono',monospace;font-size:.6rem;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,.4);margin-top:2px}
+.intake-close{width:28px;height:28px;border-radius:3px;border:1px solid rgba(255,255,255,.2);background:transparent;color:rgba(255,255,255,.6);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s;line-height:1}
+.intake-close:hover{background:rgba(255,255,255,.1);color:#fff}
+.intake-body{flex:1;overflow-y:auto;padding:16px 20px}
+.intake-sec{margin-bottom:18px}
+.intake-sec-title{font-family:'DM Mono',monospace;font-size:.6rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);padding-bottom:6px;border-bottom:1px solid var(--border);margin-bottom:8px}
+.intake-row{display:grid;grid-template-columns:100px 1fr;gap:6px;padding:3px 0;font-size:.78rem}
+.intake-label{color:var(--muted)}
+.intake-value{color:var(--ink);word-break:break-word}
+.intake-no-data{font-size:.8rem;color:var(--muted);text-align:center;padding:40px 0;font-style:italic}
+
 @media(max-width:900px){
   .layout{grid-template-columns:1fr}
   .col-right{position:static}
@@ -175,7 +193,8 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--ink);min-
   <div class="header-right">
     <span class="header-tag">Quote Builder</span>
     <button class="header-btn" id="back-btn" onclick="window.location.href='index.html'" style="display:none">← Hub</button>
-    <button class="header-btn" onclick="window.print()">Print / save PDF</button>
+    <button class="header-btn" id="intake-btn" onclick="toggleIntakePanel()" style="display:none">View Intake</button>
+    <button class="header-btn" onclick="exportQuotePDF()">Export PDF</button>
     <button class="header-btn gold" onclick="copyQuote()">Copy quote</button>
   </div>
 </header>
@@ -187,6 +206,22 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--ink);min-
     <span>Pre-filled from inquiry <strong id="prefill-ref-q"></strong> — <span id="prefill-name-q" style="font-style:italic"></span>. Review all values before copying.</span>
   </div>
   <button onclick="document.getElementById('prefill-banner').style.display='none'" style="background:transparent;border:none;color:#1e40af;cursor:pointer;font-size:16px;line-height:1">×</button>
+</div>
+
+<!-- Intake panel overlay -->
+<div id="intake-overlay" class="intake-overlay hidden">
+  <div class="intake-panel">
+    <div class="intake-header">
+      <div>
+        <div class="intake-title">Intake Answers</div>
+        <div class="intake-sub" id="intake-panel-ref"></div>
+      </div>
+      <button class="intake-close" onclick="toggleIntakePanel()">×</button>
+    </div>
+    <div class="intake-body" id="intake-body">
+      <div class="intake-no-data">No inquiry loaded</div>
+    </div>
+  </div>
 </div>
 
 <div class="layout">
@@ -925,6 +960,8 @@ calc();
 
 // ── HUB INTEGRATION ──────────────────────────────────────────────────────────
 
+let _currentInquiry = null;
+
 (function initHubPrefill() {
   const raw = sessionStorage.getItem('170e_prefill');
   if (!raw) return;
@@ -934,40 +971,49 @@ calc();
   if (!prefill?.inquiry) return;
 
   const inq = prefill.inquiry;
+  _currentInquiry = inq;
 
   // Show UI elements
   const banner = document.getElementById('prefill-banner');
-  if (banner) { banner.style.display = 'flex'; }
+  if (banner) banner.style.display = 'flex';
   const refEl = document.getElementById('prefill-ref-q');
   if (refEl) refEl.textContent = inq.refId;
   const nameEl = document.getElementById('prefill-name-q');
   if (nameEl) nameEl.textContent = `${inq.firstName} ${inq.lastName}`.trim();
   const backBtn = document.getElementById('back-btn');
   if (backBtn) backBtn.style.display = '';
+  const intakeBtn = document.getElementById('intake-btn');
+  if (intakeBtn) intakeBtn.style.display = '';
   const saveBtn = document.getElementById('save-return-btn');
   if (saveBtn) saveBtn.style.display = '';
 
-  // ── Day of week from eventDate ──
+  // Populate intake panel
+  buildIntakePanel(inq);
+
+  // ── If a saved quote state exists, restore it and skip fresh prefill ──
+  const savedState = prefill.inquiry?.quoteData?.inputState;
+  if (savedState) {
+    restoreQuoteState(savedState);
+    return;
+  }
+
+  // ── Fresh prefill from inquiry fields ──
+
   if (inq.eventDate) {
-    const dow = new Date(inq.eventDate + 'T12:00:00').getDay(); // 0=Sun
+    const dow = new Date(inq.eventDate + 'T12:00:00').getDay();
     const dowEl = document.getElementById('dow');
     if (dowEl) {
-      // options: Mon, Tue, Wed, Thu, Fri(selected), Sat, Sun
       const map = { 1:0, 2:1, 3:2, 4:3, 5:4, 6:5, 0:6 };
       dowEl.selectedIndex = map[dow] ?? 4;
     }
   }
 
-  // ── Occupancy tier from guest count ──
   if (inq.guestCount) {
     const g = parseInt(inq.guestCount) || 0;
     const occEl = document.getElementById('occupancy');
-    if (occEl) {
-      occEl.selectedIndex = g <= 50 ? 0 : g <= 100 ? 1 : 2;
-    }
+    if (occEl) occEl.selectedIndex = g <= 50 ? 0 : g <= 100 ? 1 : 2;
   }
 
-  // ── Rental hours from doorsOpen/doorsClose ──
   if (inq.doorsOpen && inq.doorsClose) {
     const hrs = calcHoursBetween(inq.doorsOpen, inq.doorsClose);
     if (hrs > 0) {
@@ -980,33 +1026,386 @@ calc();
     }
   }
 
-  // ── Bar setup from alcohol field + guest count ──
   const alcohol = (inq.alcohol || '').toLowerCase();
   const hasBar  = alcohol.startsWith('yes') || alcohol.includes('bar');
   const noBar   = alcohol.startsWith('no');
   const barEl   = document.getElementById('barSetup');
   if (barEl) {
-    if (noBar) {
-      barEl.value = '0';
-    } else if (hasBar) {
+    if (noBar) { barEl.value = '0'; }
+    else if (hasBar) {
       const g = parseInt(inq.guestCount) || 100;
       barEl.value = g <= 75 ? '1' : g <= 130 ? '2' : '3';
     }
-    syncBarStaff && syncBarStaff();
+    if (typeof syncBarStaff === 'function') syncBarStaff();
   }
 
-  // ── Security headcount from guest count ──
   const secQty = document.getElementById('qty-security');
   if (secQty && inq.guestCount) {
     const g = parseInt(inq.guestCount) || 0;
     secQty.value = g <= 75 ? '2' : g <= 125 ? '3' : '4';
   }
 
-  // ── Hint: if client provides door staff, note in staffed hours ──
-  // (visual-only, no field to auto-set)
-
   calc();
 })();
+
+// ── INTAKE PANEL ──────────────────────────────────────────────────────────────
+
+function toggleIntakePanel() {
+  const overlay = document.getElementById('intake-overlay');
+  if (!overlay) return;
+  overlay.classList.toggle('hidden');
+  if (!overlay.classList.contains('hidden')) {
+    overlay.onclick = e => { if (e.target === overlay) toggleIntakePanel(); };
+  }
+}
+
+function buildIntakePanel(inq) {
+  const refEl = document.getElementById('intake-panel-ref');
+  if (refEl) refEl.textContent = inq.refId;
+
+  const body = document.getElementById('intake-body');
+  if (!body) return;
+
+  const sec = (title, rows) => {
+    const filtered = rows.filter(([, v]) => v);
+    if (!filtered.length) return '';
+    return `<div class="intake-sec">
+      <div class="intake-sec-title">${title}</div>
+      ${filtered.map(([l, v]) => `<div class="intake-row"><span class="intake-label">${l}</span><span class="intake-value">${escHtml(String(v))}</span></div>`).join('')}
+    </div>`;
+  };
+
+  body.innerHTML = [
+    sec('Contact', [
+      ['Name', `${inq.firstName} ${inq.lastName}`.trim()],
+      ['Email', inq.email],
+      ['Phone', inq.phone],
+      ['Company', inq.company],
+      ['Referred by', inq.referral],
+    ]),
+    sec('Event', [
+      ['Type', inq.eventType],
+      ['Date', inq.eventDate ? new Date(inq.eventDate+'T12:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric'}) : ''],
+      ['Doors open', inq.doorsOpen],
+      ['Doors close', inq.doorsClose],
+      ['Guests', inq.guestCount ? inq.guestCount + ' guests' : ''],
+      ['Rooftop', inq.rooftop],
+    ]),
+    sec('Logistics', [
+      ['Services', inq.servicesNeeded],
+      ['Door staff', inq.doorStaff],
+      ['Outside vendors', inq.outsideVendors],
+      ['Guest method', inq.guestMethod],
+      ['Public event', inq.publicEvent],
+      ['Alcohol', inq.alcohol],
+      ['Age req.', inq.ageReq],
+      ['Insurance', inq.insurance],
+    ]),
+    sec('Budget', [
+      ['Range', inq.budget],
+      ['Payment', inq.payMethod],
+    ]),
+    inq.notes ? `<div class="intake-sec"><div class="intake-sec-title">Notes</div><div style="font-size:.78rem;color:var(--ink2);line-height:1.65;font-style:italic">${escHtml(inq.notes)}</div></div>` : '',
+  ].join('') || '<div class="intake-no-data">No intake data</div>';
+}
+
+function escHtml(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── STATE CAPTURE / RESTORE ───────────────────────────────────────────────────
+
+function captureQuoteState() {
+  const selIds = ['dow','occupancy','hours','setupHours','cleaningFee','staffHours','barSetup','coatCheck','barSupplies','decor','misc','depType','taxRate'];
+  const state = {
+    selects:      {},
+    equipChecks:  [],
+    staffChecks:  [],
+    qtys:         {},
+    discount:     document.getElementById('discount')?.value || '0',
+    surcharge:    document.getElementById('surcharge')?.value || '0',
+    sponsors:     sponsors.map(s => ({...s})),
+    spId,
+  };
+  selIds.forEach(id => { const el = document.getElementById(id); if (el) state.selects[id] = el.value; });
+  document.querySelectorAll('#equip-items .chk').forEach(chk => state.equipChecks.push(chk.classList.contains('on')));
+  document.querySelectorAll('#staff-items .chk').forEach(chk => state.staffChecks.push(chk.classList.contains('on')));
+  ['security','bar','door','coat','prod','cleaning-staff'].forEach(id => {
+    const el = document.getElementById('qty-'+id);
+    if (el) state.qtys[id] = el.value;
+  });
+  return state;
+}
+
+function restoreQuoteState(state) {
+  if (!state) return;
+  // Selects
+  Object.entries(state.selects || {}).forEach(([id, val]) => {
+    const el = document.getElementById(id);
+    if (el) el.value = val;
+  });
+  // Equipment checkboxes
+  const equipChks = document.querySelectorAll('#equip-items .chk');
+  (state.equipChecks || []).forEach((on, i) => {
+    if (!equipChks[i]) return;
+    const wasOn = equipChks[i].classList.contains('on');
+    if (on !== wasOn) {
+      equipChks[i].classList.toggle('on', on);
+      const amtEl = equipChks[i].closest('.li')?.querySelector('.li-amt');
+      if (amtEl) amtEl.classList.toggle('dim', !on);
+    }
+  });
+  // Staff checkboxes
+  const staffChks = document.querySelectorAll('#staff-items .chk');
+  (state.staffChecks || []).forEach((on, i) => {
+    if (!staffChks[i]) return;
+    staffChks[i].classList.toggle('on', on);
+    const amtEl = staffChks[i].closest('.li')?.querySelector('.li-amt');
+    if (amtEl) amtEl.classList.toggle('dim', !on);
+  });
+  // Qtys
+  Object.entries(state.qtys || {}).forEach(([id, val]) => {
+    const el = document.getElementById('qty-'+id);
+    if (el) el.value = val;
+  });
+  // Discount / surcharge
+  const discEl = document.getElementById('discount');
+  const surEl  = document.getElementById('surcharge');
+  if (discEl && state.discount !== undefined) discEl.value = state.discount;
+  if (surEl  && state.surcharge !== undefined) surEl.value = state.surcharge;
+  // Sponsors
+  if (state.sponsors?.length) {
+    sponsors = state.sponsors.map(s => ({...s}));
+    spId = state.spId ?? sponsors.length;
+    renderSponsors();
+  }
+  calc();
+}
+
+// ── SAVE & RETURN ─────────────────────────────────────────────────────────────
+
+function saveAndReturn() {
+  if (!window._quoteData) calc();
+  const d = window._quoteData;
+  if (!d) { alert('Generate a quote first.'); return; }
+
+  const raw = sessionStorage.getItem('170e_prefill');
+  if (!raw) { window.location.href = 'index.html'; return; }
+  const { rowIndex, refId } = JSON.parse(raw);
+
+  // Embed inputState inside quoteData so it can be restored later
+  const inputState = captureQuoteState();
+  const fullQuoteData = { ...d, inputState };
+
+  sessionStorage.setItem('170e_quote_result', JSON.stringify({
+    rowIndex,
+    refId,
+    grandTotal:    Math.round(d.grandTotal || 0),
+    quoteDataJson: JSON.stringify(fullQuoteData),
+  }));
+
+  window.location.href = 'index.html';
+}
+
+// ── PDF EXPORT ────────────────────────────────────────────────────────────────
+
+function exportQuotePDF() {
+  if (!window._quoteData) calc();
+  const d = window._quoteData;
+  if (!d) { alert('Build a quote first.'); return; }
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: 'pt', format: 'letter' });
+
+  const PW = 612, PH = 792;
+  const ML = 56, MR = 56, MT = 56;
+  const CW = PW - ML - MR;
+  let y = MT;
+
+  // Palette
+  const DARK  = [15,  15,  18];
+  const NAVY  = [26,  26,  46];
+  const GOLD  = [201, 168, 76];
+  const MUTED = [107, 107, 126];
+  const LIGHT = [226, 226, 234];
+  const GREEN = [26,  107, 66];
+  const AMBER = [122, 92,  0];
+
+  const fmtP = n => '$' + Math.round(n).toLocaleString('en-US');
+
+  // ── Header bar ──
+  doc.setFillColor(...NAVY);
+  doc.rect(0, 0, PW, 72, 'F');
+  doc.setFont('helvetica','bold');
+  doc.setFontSize(15);
+  doc.setTextColor(255,255,255);
+  doc.text('170 ELDRIDGE LLC', ML, 32);
+  doc.setFont('helvetica','normal');
+  doc.setFontSize(8);
+  doc.setTextColor(...GOLD);
+  doc.text('VENUE RENTAL QUOTE', ML, 46);
+
+  // Ref + date top right
+  doc.setFontSize(7.5);
+  doc.setTextColor(180,180,200);
+  const today = new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+  doc.text(`Ref: ${d.ref}`, PW - MR, 32, { align:'right' });
+  doc.text(`Date: ${today}`, PW - MR, 44, { align:'right' });
+  doc.text('Not a binding contract until countersigned', PW - MR, 56, { align:'right' });
+
+  y = 88;
+
+  // Client name if available
+  if (_currentInquiry) {
+    const inq = _currentInquiry;
+    const name = `${inq.firstName} ${inq.lastName}`.trim();
+    const evDate = inq.eventDate ? new Date(inq.eventDate+'T12:00:00').toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'}) : '';
+    doc.setFont('helvetica','bold');
+    doc.setFontSize(9);
+    doc.setTextColor(...DARK);
+    doc.text('PREPARED FOR', ML, y);
+    doc.setFont('helvetica','normal');
+    doc.setFontSize(11);
+    doc.text(name, ML, y + 14);
+    if (evDate) {
+      doc.setFontSize(8.5);
+      doc.setTextColor(...MUTED);
+      doc.text(evDate, ML, y + 28);
+    }
+    y += 48;
+  }
+
+  // ── Section renderer ──
+  const drawSection = (title, lines, subtotal) => {
+    // Section title
+    doc.setFillColor(247, 247, 250);
+    doc.rect(ML, y, CW, 20, 'F');
+    doc.setFont('helvetica','bold');
+    doc.setFontSize(7.5);
+    doc.setTextColor(...MUTED);
+    doc.text(title.toUpperCase(), ML + 8, y + 13);
+    doc.setFont('helvetica','bold');
+    doc.setFontSize(8.5);
+    doc.setTextColor(...DARK);
+    doc.text(fmtP(subtotal), ML + CW - 8, y + 13, { align:'right' });
+    y += 22;
+
+    // Line items
+    lines.forEach(([label, amt, color]) => {
+      doc.setFont('helvetica','normal');
+      doc.setFontSize(8.5);
+      doc.setTextColor(...(color || DARK));
+      doc.text(label, ML + 16, y + 10);
+      doc.setFont('helvetica','normal');
+      doc.text(fmtP(amt), ML + CW - 8, y + 10, { align:'right' });
+      // subtle divider
+      doc.setDrawColor(...LIGHT);
+      doc.setLineWidth(0.5);
+      doc.line(ML + 16, y + 15, ML + CW, y + 15);
+      y += 18;
+    });
+    y += 4;
+  };
+
+  // Venue
+  const venueLines = [
+    [`Base rate (${d.occLabel}, ${d.hours} hrs, ${d.dowLabel})`, d.baseRental],
+    ...(d.setupHours > 0 ? [[`Load-in / setup (${d.setupHours} hr${d.setupHours>1?'s':''} × $250)`, d.setupCost]] : []),
+    [`Cleaning fee`, d.cleaningFee],
+  ];
+  drawSection('Venue Rental', venueLines, d.venueTotal);
+
+  // Equipment
+  if (d.equipLines.length > 0) {
+    drawSection('Production & Equipment', d.equipLines.map(l => [l.name, l.amt]), d.equipTotal);
+  }
+
+  // Staff & supplies
+  const staffLines2 = [
+    ...d.staffLines.map(l => [`${l.name} (${l.qty} × $${l.rate}/hr × ${l.hrs} hrs)`, l.amt]),
+    ...(d.barSupplies ? [['Bar supplies & consumables', d.barSupplies]] : []),
+    ...(d.decor       ? [['Décor / linen allowance',   d.decor]]       : []),
+    ...(d.misc        ? [['Miscellaneous supplies',     d.misc]]        : []),
+  ];
+  if (staffLines2.length) drawSection('Staff & Supplies', staffLines2, d.staffAndSupplies);
+
+  // Sponsorships
+  if (d.spLines.length > 0) {
+    const spLinesFormatted = d.spLines.map(s => [
+      `${s.label} — ${s.catLabel} [${s.status}]`,
+      s.amt,
+      s.status === 'confirmed' ? GREEN : AMBER,
+    ]);
+    drawSection('Sponsorships', spLinesFormatted, d.confirmedAmt + d.potentialAmt);
+  }
+
+  // ── Totals box ──
+  y += 4;
+  doc.setDrawColor(...LIGHT);
+  doc.setLineWidth(1);
+  doc.line(ML, y, ML + CW, y);
+  y += 12;
+
+  const totRow = (label, val, bold, color) => {
+    doc.setFont('helvetica', bold ? 'bold' : 'normal');
+    doc.setFontSize(bold ? 9.5 : 8.5);
+    doc.setTextColor(...(color || DARK));
+    doc.text(label, ML, y);
+    doc.text(val, ML + CW, y, { align:'right' });
+    y += bold ? 16 : 14;
+  };
+
+  totRow('Venue Rental', fmtP(d.venueTotal));
+  if (d.equipTotal) totRow('Production & Equipment', fmtP(d.equipTotal));
+  if (d.staffAndSupplies) totRow('Staff & Supplies', fmtP(d.staffAndSupplies));
+  if (d.discount > 0) totRow('Discount / Credit', '-' + fmtP(d.discount), false, GREEN);
+  if (d.surcharge > 0) totRow('Additional Charges', '+' + fmtP(d.surcharge));
+  if (d.tax > 0) totRow(`Tax / Service Charge (${(d.taxRate*100).toFixed(3)}%)`, fmtP(d.tax));
+
+  y += 4;
+  doc.setDrawColor(...NAVY);
+  doc.setLineWidth(1.5);
+  doc.line(ML, y, ML + CW, y);
+  y += 14;
+  totRow('TOTAL', fmtP(d.grandTotal), true);
+
+  if (d.confirmedAmt > 0) {
+    y += 4;
+    doc.setFillColor(237, 250, 243);
+    doc.roundedRect(ML, y, CW, 36, 3, 3, 'F');
+    doc.setFont('helvetica','bold');
+    doc.setFontSize(7.5);
+    doc.setTextColor(...GREEN);
+    doc.text('CONFIRMED SPONSORSHIP', ML + 10, y + 12);
+    doc.setFontSize(8.5);
+    doc.text(`Coverage: -${fmtP(d.confirmedAmt)}`, ML + 10, y + 24);
+    doc.text(`Net due: ${fmtP(d.netConfirmed)}`, ML + CW - 10, y + 24, { align:'right' });
+    y += 44;
+  }
+
+  if (d.deposit > 0) {
+    y += 4;
+    const isRef = d.depType === 'refundable';
+    totRow(isRef ? 'Refundable Security Deposit' : 'Non-refundable Deposit (credited)', fmtP(d.deposit), false, MUTED);
+    const dueAtSigning = (d.confirmedAmt > 0 ? d.netConfirmed : d.grandTotal) - (isRef ? 0 : d.deposit);
+    totRow('DUE AT SIGNING', fmtP(Math.max(0, dueAtSigning)), true);
+  }
+
+  // ── Footer ──
+  doc.setFillColor(...NAVY);
+  doc.rect(0, PH - 40, PW, 40, 'F');
+  doc.setFont('helvetica','normal');
+  doc.setFontSize(7.5);
+  doc.setTextColor(180, 180, 200);
+  doc.text('170 Eldridge Street, New York, NY 10002', ML, PH - 20);
+  doc.text('This quote is an estimate. Not a binding contract until countersigned.', PW - MR, PH - 20, { align:'right' });
+
+  // Save
+  const clientName = _currentInquiry ? `${_currentInquiry.firstName}_${_currentInquiry.lastName}`.replace(/\s+/g,'_') : 'quote';
+  doc.save(`170_Eldridge_Quote_${clientName}.pdf`);
+}
+
+// ── HOUR CALC HELPER ──────────────────────────────────────────────────────────
 
 function calcHoursBetween(openStr, closeStr) {
   const toMins = s => {
@@ -1021,27 +1420,8 @@ function calcHoursBetween(openStr, closeStr) {
   };
   const o = toMins(openStr), c = toMins(closeStr);
   if (o === null || c === null) return 0;
-  const diff = c < o ? (c + 1440) - o : c - o; // handle midnight crossing
+  const diff = c < o ? (c + 1440) - o : c - o;
   return Math.round(diff / 60);
-}
-
-function saveAndReturn() {
-  if (!window._quoteData) { calc(); }
-  const d = window._quoteData;
-  if (!d) { alert('Generate a quote first.'); return; }
-
-  const raw = sessionStorage.getItem('170e_prefill');
-  if (!raw) { window.location.href = 'index.html'; return; }
-  const { rowIndex, refId } = JSON.parse(raw);
-
-  sessionStorage.setItem('170e_quote_result', JSON.stringify({
-    rowIndex,
-    refId,
-    grandTotal: Math.round(d.grandTotal || 0),
-    quoteDataJson: JSON.stringify(d),
-  }));
-
-  window.location.href = 'index.html';
 }
 </script>
 </body>
