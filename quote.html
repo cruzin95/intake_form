@@ -639,9 +639,13 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--ink);min-
 
       <div class="action-row">
         <button class="act-btn primary" onclick="copyQuote()">Copy quote text</button>
-        <button id="save-return-btn" class="act-btn gold" onclick="saveAndReturn()" style="display:none">
+        <button id="save-return-btn" class="act-btn gold" onclick="saveToHub()" style="display:none">
           <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M2 6.5l3.5 3.5 5.5-6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          Save to Hub & return
+          Save to Hub
+        </button>
+        <button id="email-quote-btn" class="act-btn" onclick="emailQuote()" style="display:none">
+          <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><rect x="1" y="2.5" width="11" height="8" rx="1" stroke="currentColor" stroke-width="1.3"/><path d="M1 4l5.5 3.5L12 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+          Email Quote + Hold
         </button>
         <button class="act-btn" onclick="window.print()">
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="2" y="4" width="10" height="7" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M4 4V2h6v2M4 11v1h6v-1" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
@@ -986,6 +990,8 @@ let _currentInquiry = null;
   if (intakeBtn) intakeBtn.style.display = '';
   const saveBtn = document.getElementById('save-return-btn');
   if (saveBtn) saveBtn.style.display = '';
+  const emailBtn = document.getElementById('email-quote-btn');
+  if (emailBtn) emailBtn.style.display = '';
 
   // Populate intake panel
   buildIntakePanel(inq);
@@ -1184,36 +1190,203 @@ function restoreQuoteState(state) {
 
 // ── SAVE & RETURN ─────────────────────────────────────────────────────────────
 
-function saveAndReturn() {
+// ── SAVE TO HUB (no email/calendar) ──────────────────────────────────────────
+
+function saveToHub() {
   if (!window._quoteData) calc();
   const d = window._quoteData;
-  if (!d) { alert('Generate a quote first.'); return; }
+  if (!d) { alert('Build a quote first.'); return; }
 
   const raw = sessionStorage.getItem('170e_prefill');
   if (!raw) { window.location.href = 'index.html'; return; }
   const { rowIndex, refId } = JSON.parse(raw);
 
-  // Embed inputState inside quoteData so it can be restored later
-  const inputState = captureQuoteState();
+  const inputState   = captureQuoteState();
   const fullQuoteData = { ...d, inputState };
 
   sessionStorage.setItem('170e_quote_result', JSON.stringify({
     rowIndex,
     refId,
-    grandTotal:    Math.round(d.grandTotal || 0),
-    quoteDataJson: JSON.stringify(fullQuoteData),
+    grandTotal:      Math.round(d.grandTotal || 0),
+    quoteDataJson:   JSON.stringify(fullQuoteData),
+    calendarEventId: '',
   }));
 
   window.location.href = 'index.html';
 }
 
-// ── PDF EXPORT ────────────────────────────────────────────────────────────────
+// ── EMAIL QUOTE + CALENDAR HOLD ───────────────────────────────────────────────
 
-function exportQuotePDF() {
+async function emailQuote() {
   if (!window._quoteData) calc();
   const d = window._quoteData;
   if (!d) { alert('Build a quote first.'); return; }
 
+  const raw = sessionStorage.getItem('170e_prefill');
+  if (!raw) { window.location.href = 'index.html'; return; }
+  const { rowIndex, refId, token } = JSON.parse(raw);
+  const accessToken = token || sessionStorage.getItem('170e_token');
+
+  const inputState    = captureQuoteState();
+  const fullQuoteData = { ...d, inputState };
+
+  const btn = document.getElementById('email-quote-btn');
+  if (btn) { btn.textContent = 'Sending…'; btn.disabled = true; }
+
+  let calendarEventId = '';
+
+  try {
+    const [calResp] = await Promise.all([
+      _currentInquiry ? createCalendarHold(accessToken, _currentInquiry, d) : Promise.resolve(null),
+      _currentInquiry ? createGmailDraft(accessToken, _currentInquiry, d)   : Promise.resolve(null),
+    ]);
+    if (calResp?.id) calendarEventId = calResp.id;
+  } catch(err) {
+    console.warn('Calendar/Gmail error:', err);
+    alert('Quote saved, but calendar/email failed: ' + err.message);
+  }
+
+  sessionStorage.setItem('170e_quote_result', JSON.stringify({
+    rowIndex,
+    refId,
+    grandTotal:      Math.round(d.grandTotal || 0),
+    quoteDataJson:   JSON.stringify(fullQuoteData),
+    calendarEventId,
+  }));
+
+  window.location.href = 'index.html';
+}
+
+// ── CALENDAR HOLD ─────────────────────────────────────────────────────────────
+
+async function createCalendarHold(token, inq, quote) {
+  if (!inq.eventDate) return;
+  const CALENDAR_ID = encodeURIComponent('170Eldridge@gmail.com');
+  const name = `${inq.firstName} ${inq.lastName}`.trim();
+  const total = Math.round(quote.grandTotal || 0).toLocaleString('en-US');
+
+  // All-day event on the event date
+  const event = {
+    summary: `HOLD — ${name}`,
+    description: `${inq.eventType || 'Event'} · ${inq.guestCount || '?'} guests\nQuote: $${total}\nRef: ${inq.refId}\n\nBooked via Carriage House Hub`,
+    start: { date: inq.eventDate },
+    end:   { date: inq.eventDate },
+    status: 'tentative',
+    transparency: 'opaque',
+  };
+
+  const resp = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/${CALENDAR_ID}/events`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(event),
+    }
+  );
+  if (!resp.ok) {
+    const err = await resp.json();
+    throw new Error('Calendar: ' + (err.error?.message || resp.status));
+  }
+  return resp.json();
+}
+
+// ── GMAIL DRAFT ───────────────────────────────────────────────────────────────
+
+async function createGmailDraft(token, inq, quote) {
+  const pdfBase64 = buildQuotePDFBase64(quote, inq);
+  const name      = `${inq.firstName} ${inq.lastName}`.trim();
+  const firstName = inq.firstName || name;
+  const total     = Math.round(quote.grandTotal || 0).toLocaleString('en-US');
+  const deposit   = quote.deposit > 0 ? Math.round(quote.deposit).toLocaleString('en-US') : null;
+  const isRef     = quote.depType === 'refundable';
+  const evDate    = inq.eventDate
+    ? new Date(inq.eventDate + 'T12:00:00').toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric', year:'numeric' })
+    : 'your event date';
+
+  const depositLine = deposit
+    ? `<p style="margin:0 0 8px">A ${isRef ? 'refundable security' : 'non-refundable'} deposit of <strong>$${deposit}</strong> is required to confirm your booking${isRef ? ' and will be returned within 3 days following the event' : ' and will be credited toward the total'}.</p>`
+    : '';
+
+  const htmlBody = `
+<div style="font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;max-width:600px;color:#0f0f12">
+  <div style="background:#1a1a2e;padding:28px 32px;margin-bottom:24px">
+    <div style="font-size:18px;color:#fff;letter-spacing:.03em">170 Eldridge LLC</div>
+    <div style="font-size:11px;color:#c9a84c;margin-top:4px;letter-spacing:.1em;text-transform:uppercase">Event Quote</div>
+  </div>
+  <div style="padding:0 8px">
+    <p style="margin:0 0 16px">Hi ${firstName},</p>
+    <p style="margin:0 0 16px">Thank you for your interest in Carriage House. Please find your quote attached for <strong>${inq.eventType || 'your event'}</strong> on <strong>${evDate}</strong>.</p>
+    <div style="background:#f7f7fa;border:1px solid #e2e2ea;border-radius:6px;padding:16px 20px;margin:0 0 16px">
+      <div style="font-size:11px;font-weight:600;color:#6b6b7e;letter-spacing:.08em;text-transform:uppercase;margin-bottom:10px">Quote Summary</div>
+      <div style="display:flex;justify-content:space-between;font-size:14px;margin-bottom:6px">
+        <span style="color:#6b6b7e">Event date</span><span style="font-weight:500">${evDate}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:14px;margin-bottom:6px">
+        <span style="color:#6b6b7e">Guest count</span><span style="font-weight:500">${inq.guestCount || '—'}</span>
+      </div>
+      <div style="border-top:1px solid #e2e2ea;margin:10px 0"></div>
+      <div style="display:flex;justify-content:space-between;font-size:16px">
+        <span style="font-weight:600">Total</span><span style="font-weight:700">$${total}</span>
+      </div>
+    </div>
+    ${depositLine}
+    <p style="margin:0 0 16px">The full quote breakdown is attached as a PDF. Please review and don't hesitate to reach out with any questions — I'm happy to go over the details or adjust anything to better fit your needs.</p>
+    <p style="margin:0 0 4px">Looking forward to hearing from you.</p>
+    <p style="margin:0 0 24px">Best,</p>
+    <div style="border-top:1px solid #e2e2ea;padding-top:16px;font-size:12px;color:#6b6b7e">
+      <strong style="color:#0f0f12">Carriage House</strong><br>
+      170 Eldridge Street, New York, NY 10002<br>
+      <a href="https://carriagehouse.nyc" style="color:#0f3460">carriagehouse.nyc</a>
+    </div>
+  </div>
+</div>`.trim();
+
+  const clientFileName = `170_Eldridge_Quote_${name.replace(/\s+/g,'_')}.pdf`;
+  const boundary = 'boundary_170eldridge_' + Date.now();
+
+  const emailLines = [
+    `MIME-Version: 1.0`,
+    `To: ${inq.email}`,
+    `Subject: Carriage House — Quote for ${inq.eventType || 'Your Event'} on ${evDate}`,
+    `Content-Type: multipart/mixed; boundary="${boundary}"`,
+    ``,
+    `--${boundary}`,
+    `Content-Type: text/html; charset="UTF-8"`,
+    `Content-Transfer-Encoding: quoted-printable`,
+    ``,
+    htmlBody,
+    ``,
+    `--${boundary}`,
+    `Content-Type: application/pdf; name="${clientFileName}"`,
+    `Content-Transfer-Encoding: base64`,
+    `Content-Disposition: attachment; filename="${clientFileName}"`,
+    ``,
+    pdfBase64,
+    ``,
+    `--${boundary}--`,
+  ].join('\r\n');
+
+  // Base64url encode the whole email
+  const encodedEmail = btoa(unescape(encodeURIComponent(emailLines)))
+    .replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+
+  const resp = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/drafts', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message: { raw: encodedEmail } }),
+  });
+  if (!resp.ok) {
+    const err = await resp.json();
+    throw new Error('Gmail: ' + (err.error?.message || resp.status));
+  }
+  return resp.json();
+}
+
+// ── PDF EXPORT ────────────────────────────────────────────────────────────────
+
+function buildQuotePDFDoc(d, inq) {
+  // Returns a jsPDF doc object — used by both exportQuotePDF and createGmailDraft
+  if (!d) return null;
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit: 'pt', format: 'letter' });
 
@@ -1222,7 +1395,6 @@ function exportQuotePDF() {
   const CW = PW - ML - MR;
   let y = MT;
 
-  // Palette
   const DARK  = [15,  15,  18];
   const NAVY  = [26,  26,  46];
   const GOLD  = [201, 168, 76];
@@ -1233,7 +1405,6 @@ function exportQuotePDF() {
 
   const fmtP = n => '$' + Math.round(n).toLocaleString('en-US');
 
-  // ── Header bar ──
   doc.setFillColor(...NAVY);
   doc.rect(0, 0, PW, 72, 'F');
   doc.setFont('helvetica','bold');
@@ -1245,7 +1416,6 @@ function exportQuotePDF() {
   doc.setTextColor(...GOLD);
   doc.text('VENUE RENTAL QUOTE', ML, 46);
 
-  // Ref + date top right
   doc.setFontSize(7.5);
   doc.setTextColor(180,180,200);
   const today = new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
@@ -1255,10 +1425,8 @@ function exportQuotePDF() {
 
   y = 88;
 
-  // Client name if available
-  if (_currentInquiry) {
-    const inq = _currentInquiry;
-    const name = `${inq.firstName} ${inq.lastName}`.trim();
+  if (inq) {
+    const name   = `${inq.firstName} ${inq.lastName}`.trim();
     const evDate = inq.eventDate ? new Date(inq.eventDate+'T12:00:00').toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'}) : '';
     doc.setFont('helvetica','bold');
     doc.setFontSize(9);
@@ -1275,9 +1443,7 @@ function exportQuotePDF() {
     y += 48;
   }
 
-  // ── Section renderer ──
   const drawSection = (title, lines, subtotal) => {
-    // Section title
     doc.setFillColor(247, 247, 250);
     doc.rect(ML, y, CW, 20, 'F');
     doc.setFont('helvetica','bold');
@@ -1289,16 +1455,12 @@ function exportQuotePDF() {
     doc.setTextColor(...DARK);
     doc.text(fmtP(subtotal), ML + CW - 8, y + 13, { align:'right' });
     y += 22;
-
-    // Line items
     lines.forEach(([label, amt, color]) => {
       doc.setFont('helvetica','normal');
       doc.setFontSize(8.5);
       doc.setTextColor(...(color || DARK));
       doc.text(label, ML + 16, y + 10);
-      doc.setFont('helvetica','normal');
       doc.text(fmtP(amt), ML + CW - 8, y + 10, { align:'right' });
-      // subtle divider
       doc.setDrawColor(...LIGHT);
       doc.setLineWidth(0.5);
       doc.line(ML + 16, y + 15, ML + CW, y + 15);
@@ -1307,20 +1469,16 @@ function exportQuotePDF() {
     y += 4;
   };
 
-  // Venue
-  const venueLines = [
+  drawSection('Venue Rental', [
     [`Base rate (${d.occLabel}, ${d.hours} hrs, ${d.dowLabel})`, d.baseRental],
     ...(d.setupHours > 0 ? [[`Load-in / setup (${d.setupHours} hr${d.setupHours>1?'s':''} × $250)`, d.setupCost]] : []),
     [`Cleaning fee`, d.cleaningFee],
-  ];
-  drawSection('Venue Rental', venueLines, d.venueTotal);
+  ], d.venueTotal);
 
-  // Equipment
   if (d.equipLines.length > 0) {
     drawSection('Production & Equipment', d.equipLines.map(l => [l.name, l.amt]), d.equipTotal);
   }
 
-  // Staff & supplies
   const staffLines2 = [
     ...d.staffLines.map(l => [`${l.name} (${l.qty} × $${l.rate}/hr × ${l.hrs} hrs)`, l.amt]),
     ...(d.barSupplies ? [['Bar supplies & consumables', d.barSupplies]] : []),
@@ -1329,17 +1487,13 @@ function exportQuotePDF() {
   ];
   if (staffLines2.length) drawSection('Staff & Supplies', staffLines2, d.staffAndSupplies);
 
-  // Sponsorships
   if (d.spLines.length > 0) {
-    const spLinesFormatted = d.spLines.map(s => [
-      `${s.label} — ${s.catLabel} [${s.status}]`,
-      s.amt,
+    drawSection('Sponsorships', d.spLines.map(s => [
+      `${s.label} — ${s.catLabel} [${s.status}]`, s.amt,
       s.status === 'confirmed' ? GREEN : AMBER,
-    ]);
-    drawSection('Sponsorships', spLinesFormatted, d.confirmedAmt + d.potentialAmt);
+    ]), d.confirmedAmt + d.potentialAmt);
   }
 
-  // ── Totals box ──
   y += 4;
   doc.setDrawColor(...LIGHT);
   doc.setLineWidth(1);
@@ -1356,11 +1510,11 @@ function exportQuotePDF() {
   };
 
   totRow('Venue Rental', fmtP(d.venueTotal));
-  if (d.equipTotal) totRow('Production & Equipment', fmtP(d.equipTotal));
-  if (d.staffAndSupplies) totRow('Staff & Supplies', fmtP(d.staffAndSupplies));
-  if (d.discount > 0) totRow('Discount / Credit', '-' + fmtP(d.discount), false, GREEN);
-  if (d.surcharge > 0) totRow('Additional Charges', '+' + fmtP(d.surcharge));
-  if (d.tax > 0) totRow(`Tax / Service Charge (${(d.taxRate*100).toFixed(3)}%)`, fmtP(d.tax));
+  if (d.equipTotal)        totRow('Production & Equipment', fmtP(d.equipTotal));
+  if (d.staffAndSupplies)  totRow('Staff & Supplies', fmtP(d.staffAndSupplies));
+  if (d.discount > 0)      totRow('Discount / Credit', '-' + fmtP(d.discount), false, GREEN);
+  if (d.surcharge > 0)     totRow('Additional Charges', '+' + fmtP(d.surcharge));
+  if (d.tax > 0)           totRow(`Tax / Service Charge (${(d.taxRate*100).toFixed(3)}%)`, fmtP(d.tax));
 
   y += 4;
   doc.setDrawColor(...NAVY);
@@ -1391,7 +1545,6 @@ function exportQuotePDF() {
     totRow('DUE AT SIGNING', fmtP(Math.max(0, dueAtSigning)), true);
   }
 
-  // ── Footer ──
   doc.setFillColor(...NAVY);
   doc.rect(0, PH - 40, PW, 40, 'F');
   doc.setFont('helvetica','normal');
@@ -1400,8 +1553,24 @@ function exportQuotePDF() {
   doc.text('170 Eldridge Street, New York, NY 10002', ML, PH - 20);
   doc.text('This quote is an estimate. Not a binding contract until countersigned.', PW - MR, PH - 20, { align:'right' });
 
-  // Save
-  const clientName = _currentInquiry ? `${_currentInquiry.firstName}_${_currentInquiry.lastName}`.replace(/\s+/g,'_') : 'quote';
+  return doc;
+}
+
+function buildQuotePDFBase64(d, inq) {
+  const doc = buildQuotePDFDoc(d, inq);
+  if (!doc) return '';
+  return doc.output('datauristring').split(',')[1]; // base64 only
+}
+
+function exportQuotePDF() {
+  if (!window._quoteData) calc();
+  const d = window._quoteData;
+  if (!d) { alert('Build a quote first.'); return; }
+  const doc = buildQuotePDFDoc(d, _currentInquiry);
+  if (!doc) return;
+  const clientName = _currentInquiry
+    ? `${_currentInquiry.firstName}_${_currentInquiry.lastName}`.replace(/\s+/g,'_')
+    : 'quote';
   doc.save(`170_Eldridge_Quote_${clientName}.pdf`);
 }
 

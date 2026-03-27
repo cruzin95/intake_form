@@ -679,6 +679,14 @@
       Mark as Contracted &amp; return to Hub
     </button>
 
+    <button id="email-contract-btn" onclick="emailContract()" style="display:none;width:100%;margin-top:8px;padding:11px 16px;border-radius:6px;border:1.5px solid var(--border);background:transparent;color:var(--ink2);font-family:'DM Sans',sans-serif;font-size:.85rem;font-weight:500;cursor:pointer;display:none;align-items:center;justify-content:center;gap:8px">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="2.5" width="12" height="9" rx="1" stroke="currentColor" stroke-width="1.3"/><path d="M1 5l6 4 6-4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+      <span id="email-contract-btn-text">Email Contract + Update Hold</span>
+      <span id="email-contract-spinner" style="display:none;width:13px;height:13px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0"></span>
+    </button>
+
+    <div id="email-action-status" style="display:none;margin-top:8px;padding:9px 12px;border-radius:4px;font-size:.76rem;line-height:1.5;white-space:pre-line"></div>
+
     <div class="status-box" id="statusBox"></div>
 
     <!-- NOTES -->
@@ -1212,6 +1220,8 @@ async function generateContract() {
     if (backBtn) backBtn.style.display = '';
     const markBtn = document.getElementById('mark-contracted-btn');
     if (markBtn) markBtn.style.display = 'flex';
+    const emailCBtn = document.getElementById('email-contract-btn');
+    if (emailCBtn) emailCBtn.style.display = 'flex';
     updateSummary();
     return;
   }
@@ -1227,8 +1237,8 @@ async function generateContract() {
   if (backBtn) backBtn.style.display = '';
   const markBtn = document.getElementById('mark-contracted-btn');
   if (markBtn) markBtn.style.display = 'flex';
-
-  // ── Helper: set field value and fire change event ──
+  const emailCBtn2 = document.getElementById('email-contract-btn');
+  if (emailCBtn2) emailCBtn2.style.display = 'flex';
   const set = (id, val) => {
     const el = document.getElementById(id);
     if (!el || val === undefined || val === null || val === '') return;
@@ -1365,6 +1375,383 @@ async function generateContract() {
 
   updateSummary();
 })();
+
+// ══════════════════════════════════════════════════════════════════════════
+// CONTRACT ACTIONS — updateCalendarHold / createContractGmailDraft / emailContract
+// ══════════════════════════════════════════════════════════════════════════
+
+// ── Auth: token is stored by hub as '170e_token' ──────────────────────────
+function getHubToken() {
+  return sessionStorage.getItem('170e_token') || null;
+}
+
+// ── ISO datetime builder with correct NYC DST offset ──────────────────────
+function buildISODateTime(dateStr, timeStr) {
+  if (!dateStr || !timeStr) return null;
+  // Build naive local datetime string and calculate NYC offset at that moment
+  const naive   = new Date(`${dateStr}T${timeStr}:00`);
+  const nycStr  = naive.toLocaleString('en-US', { timeZone: 'America/New_York' });
+  const nycDate = new Date(nycStr);
+  const offsetMs = naive.getTime() - nycDate.getTime(); // positive = NYC is behind UTC
+  const pad = n => String(Math.abs(n)).padStart(2, '0');
+  const sign = offsetMs >= 0 ? '-' : '+';
+  const offsetHrs = Math.round(Math.abs(offsetMs) / 36e5);
+  return `${dateStr}T${timeStr}:00${sign}${pad(offsetHrs)}:00`;
+}
+
+// ── Email action status helper ────────────────────────────────────────────
+function setActionStatus(type, msg) {
+  const el = document.getElementById('email-action-status');
+  if (!el) return;
+  el.style.display = msg ? 'block' : 'none';
+  if (!msg) return;
+  const base = 'padding:9px 12px;border-radius:4px;font-size:.76rem;line-height:1.5;white-space:pre-line;';
+  const styles = {
+    loading: base + 'background:rgba(15,52,96,.06);color:var(--accent2);border:1px solid rgba(15,52,96,.15)',
+    success: base + 'background:rgba(45,122,79,.08);color:#1a6b42;border:1px solid rgba(45,122,79,.2)',
+    error:   base + 'background:rgba(192,57,43,.07);color:var(--error);border:1px solid rgba(192,57,43,.18)',
+  };
+  el.style.cssText = styles[type] || styles.loading;
+  el.textContent = msg;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// 1. updateCalendarHold()
+//    PATCHes the Google Calendar event whose ID lives in
+//    sessionStorage('170e_prefill').calendarEventId.
+//    Updates start/end to the access window from the contract form.
+// ─────────────────────────────────────────────────────────────────────────
+async function updateCalendarHold() {
+  const token = getHubToken();
+  if (!token) throw new Error('Not signed in. Return to hub and sign in first.');
+
+  let prefill = {};
+  try { prefill = JSON.parse(sessionStorage.getItem('170e_prefill') || '{}'); } catch {}
+  const eventId = prefill.calendarEventId;
+  if (!eventId) throw new Error('No calendar event ID found in session. Make sure a calendar hold was created when quoting.');
+
+  const startDate = getVal('accessStartDate');
+  const startTime = getVal('accessStartTime');
+  const endDate   = getVal('accessEndDate');
+  const endTime   = getVal('accessEndTime');
+
+  if (!startDate || !startTime || !endDate || !endTime) {
+    throw new Error('Fill in access start and end date/time before updating the calendar.');
+  }
+
+  const startISO = buildISODateTime(startDate, startTime);
+  const endISO   = buildISODateTime(endDate, endTime);
+
+  const clientNames = getVal('clientNames') || 'TBD';
+  const eventDesc   = getVal('eventDescription') || 'Private Event';
+  const maxGuests   = getVal('maxGuests');
+  const rentalFee   = getVal('rentalFee');
+
+  const description = [
+    `Client: ${clientNames}`,
+    `Event: ${eventDesc}`,
+    maxGuests  ? `Guests: up to ${maxGuests}` : null,
+    rentalFee  ? `Rental fee: $${Number(rentalFee).toLocaleString()}` : null,
+    '',
+    `Doors open:  ${fmtTime(getVal('doorsOpenTime'))}, ${fmtShortDate(getVal('doorsOpenDate'))}`,
+    `Doors close: ${fmtTime(getVal('doorsCloseTime'))}, ${fmtShortDate(getVal('doorsCloseDate'))}`,
+    '',
+    'Updated via contract form · 170 Eldridge LLC',
+  ].filter(l => l !== null).join('\n');
+
+  const body = {
+    summary:     `${clientNames} — ${eventDesc}`,
+    description,
+    start: { dateTime: startISO, timeZone: 'America/New_York' },
+    end:   { dateTime: endISO,   timeZone: 'America/New_York' },
+  };
+
+  const calId = encodeURIComponent('170Eldridge@gmail.com');
+  const encId = encodeURIComponent(eventId);
+  const url   = `https://www.googleapis.com/calendar/v3/calendars/${calId}/events/${encId}`;
+
+  const res = await fetch(url, {
+    method: 'PATCH',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error('Calendar: ' + (err?.error?.message || `HTTP ${res.status}`));
+  }
+
+  return { startDate, startTime, endDate, endTime };
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// 2. createContractGmailDraft()
+//    Creates a polished HTML Gmail draft in 170Eldridge@gmail.com
+//    summarising all contract fields with a reply CTA.
+//    Returns the draft ID.
+// ─────────────────────────────────────────────────────────────────────────
+async function createContractGmailDraft() {
+  const token = getHubToken();
+  if (!token) throw new Error('Not signed in. Return to hub and sign in first.');
+
+  // ── Gather all contract fields ─────────────────────────────────────────
+  const clientNames = getVal('clientNames')      || '(Client Name)';
+  const clientEmail = getVal('clientEmail')      || '';
+  const eventDesc   = getVal('eventDescription') || 'Private Event';
+  const accessStart = `${fmtTime(getVal('accessStartTime'))}, ${fmtDate(getVal('accessStartDate'))}`;
+  const accessEnd   = `${fmtTime(getVal('accessEndTime'))}, ${fmtDate(getVal('accessEndDate'))}`;
+  const doorsOpen   = `${fmtTime(getVal('doorsOpenTime'))}, ${fmtDate(getVal('doorsOpenDate'))}`;
+  const doorsClose  = `${fmtTime(getVal('doorsCloseTime'))}, ${fmtDate(getVal('doorsCloseDate'))}`;
+  const maxGuests   = getVal('maxGuests')           || '—';
+  const rentalFee   = getVal('rentalFee')           ? fmtMoney(getVal('rentalFee'))           : '—';
+  const secDeposit  = getVal('securityDeposit')     ? fmtMoney(getVal('securityDeposit'))     : '—';
+  const payDue      = getVal('paymentDueDate')      ? fmtShortDate(getVal('paymentDueDate'))  : '—';
+  const depReturn   = getVal('depositReturnDate')   ? fmtShortDate(getVal('depositReturnDate')): '—';
+  const payMethod   = getVal('paymentMethod')       || '—';
+  const rooftop     = getChecked('rooftopAllowed')  ? 'Yes' : 'No';
+
+  const total = (parseFloat(getVal('rentalFee')) || 0) + (parseFloat(getVal('securityDeposit')) || 0);
+  const totalFmt = total ? fmtMoney(total) : '—';
+
+  const firstName = clientNames.split(/[\s,&]+/)[0];
+
+  // ── Row builder for tables ─────────────────────────────────────────────
+  const trow = (label, val, i) =>
+    `<tr style="background:${i % 2 === 0 ? '#fafafa' : '#fff'}">
+       <td style="padding:10px 16px;font-size:13px;color:#6b6b7e;font-weight:500;width:44%;border-bottom:1px solid #f0f0f5">${label}</td>
+       <td style="padding:10px 16px;font-size:13px;color:#1a1a2e;border-bottom:1px solid #f0f0f5">${val}</td>
+     </tr>`;
+
+  const eventRows = [
+    ['Event', eventDesc],
+    ['Access start', accessStart],
+    ['Access end', accessEnd],
+    ['Doors open', doorsOpen],
+    ['Doors close', doorsClose],
+    ['Max guests', maxGuests],
+    ['Rooftop access', rooftop],
+  ].map(([l, v], i) => trow(l, v, i)).join('');
+
+  const finRows = [
+    ['Rental fee', rentalFee],
+    ['Security deposit', secDeposit],
+    ['Payment due by', payDue],
+    ['Deposit return by', depReturn],
+    ['Payment method', payMethod],
+  ].map(([l, v], i) => trow(l, v, i)).join('');
+
+  const htmlBody = `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f4f4f7;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;color:#1a1a2e">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f7;padding:40px 0">
+<tr><td align="center">
+<table width="600" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 16px rgba(0,0,0,.08);max-width:600px;width:100%">
+
+  <!-- Header -->
+  <tr><td style="background:#1a1a2e;padding:36px 40px 28px">
+    <p style="margin:0 0 4px;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,255,255,.4)">Carriage House · 170 Eldridge Street, New York</p>
+    <h1 style="margin:0;font-size:26px;font-weight:600;color:#fff;letter-spacing:-.01em;line-height:1.2">Your event contract is ready</h1>
+  </td></tr>
+
+  <!-- Greeting -->
+  <tr><td style="padding:32px 40px 0">
+    <p style="margin:0 0 12px;font-size:15px;line-height:1.65;color:#2a2a35">Hi ${firstName},</p>
+    <p style="margin:0;font-size:15px;line-height:1.65;color:#2a2a35">
+      Thanks for booking Carriage House. Below is a summary of your contract terms for <strong>${eventDesc}</strong>.
+      Please review everything carefully — a signed copy will follow separately.
+    </p>
+  </td></tr>
+
+  <!-- Event Details -->
+  <tr><td style="padding:28px 40px 0">
+    <p style="margin:0 0 12px;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#c9a84c;font-weight:600">Event Details</p>
+    <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e8e8f0;border-radius:8px;overflow:hidden">
+      ${eventRows}
+    </table>
+  </td></tr>
+
+  <!-- Financial Summary -->
+  <tr><td style="padding:24px 40px 0">
+    <p style="margin:0 0 12px;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#c9a84c;font-weight:600">Financial Summary</p>
+    <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e8e8f0;border-radius:8px;overflow:hidden">
+      ${finRows}
+      <tr style="background:#1a1a2e">
+        <td style="padding:13px 16px;font-size:13px;color:rgba(255,255,255,.7);font-weight:600">Total due at signing</td>
+        <td style="padding:13px 16px;font-size:16px;color:#c9a84c;font-weight:700">${totalFmt}</td>
+      </tr>
+    </table>
+  </td></tr>
+
+  <!-- CTA -->
+  <tr><td style="padding:28px 40px 0">
+    <table cellpadding="0" cellspacing="0" width="100%" style="background:#f7f5ef;border:1px solid #e8e3d0;border-radius:10px">
+      <tr><td style="padding:24px 28px">
+        <p style="margin:0 0 6px;font-size:15px;font-weight:600;color:#1a1a2e">Next steps</p>
+        <p style="margin:0 0 18px;font-size:14px;line-height:1.6;color:#4a4a6a">
+          Please review this summary and reply with any questions before signing.
+          Once you're ready, we'll send the full contract for your signature.
+          Payment instructions will be included at that time.
+        </p>
+        <a href="mailto:events@carriagehouse.nyc?subject=Re%3A%20Contract%20%E2%80%94%20${encodeURIComponent(eventDesc)}"
+           style="display:inline-block;background:#1a1a2e;color:#fff;font-size:13px;font-weight:600;letter-spacing:.04em;text-decoration:none;padding:12px 24px;border-radius:6px">
+          Reply to confirm →
+        </a>
+      </td></tr>
+    </table>
+  </td></tr>
+
+  <!-- Footer -->
+  <tr><td style="padding:32px 40px 36px;border-top:1px solid #f0f0f5;margin-top:28px">
+    <p style="margin:28px 0 0;font-size:12px;line-height:1.7;color:#9090a0">
+      Carriage House · 170 Eldridge Street, New York, NY 10002<br>
+      events@carriagehouse.nyc · carriagehouse.nyc<br><br>
+      This is a summary for reference. The binding agreement is the signed contract document.
+    </p>
+  </td></tr>
+
+</table>
+</td></tr>
+</table>
+</body></html>`;
+
+  // ── Plain-text fallback ────────────────────────────────────────────────
+  const textBody = [
+    `Hi ${firstName},`,
+    ``,
+    `Thanks for booking Carriage House. Here's your contract summary for ${eventDesc}.`,
+    ``,
+    `EVENT`,
+    `Access: ${accessStart} → ${accessEnd}`,
+    `Doors:  ${doorsOpen} → ${doorsClose}`,
+    `Guests: ${maxGuests}`,
+    ``,
+    `FINANCIAL`,
+    `Rental fee:       ${rentalFee}`,
+    `Security deposit: ${secDeposit}`,
+    `Total due:        ${totalFmt}`,
+    `Payment by:       ${payDue}`,
+    `Method:           ${payMethod}`,
+    ``,
+    `Please reply with any questions before signing.`,
+    ``,
+    `Carriage House`,
+    `170 Eldridge Street, New York, NY 10002`,
+    `events@carriagehouse.nyc`,
+  ].join('\n');
+
+  // ── Build RFC2822 multipart message ───────────────────────────────────
+  // Use the signed-in user identity (lucas@carriagehouse.nyc), not the
+  // calendar owner. Gmail will use the authenticated user's account for
+  // the draft regardless of what's in the From header.
+  const boundary    = `bound_${Date.now().toString(36)}`;
+  const subject     = `Carriage House — Contract Summary: ${eventDesc}`;
+  const senderEmail = sessionStorage.getItem('170e_user') || '';
+  const to          = clientEmail ? `${clientNames} <${clientEmail}>` : '';
+
+  const rawEmail = [
+    senderEmail ? `From: Carriage House <${senderEmail}>` : `From: Carriage House`,
+    to ? `To: ${to}` : `To: `,
+    `Subject: ${subject}`,
+    `MIME-Version: 1.0`,
+    `Content-Type: multipart/alternative; boundary="${boundary}"`,
+    ``,
+    `--${boundary}`,
+    `Content-Type: text/plain; charset="UTF-8"`,
+    ``,
+    textBody,
+    ``,
+    `--${boundary}`,
+    `Content-Type: text/html; charset="UTF-8"`,
+    ``,
+    htmlBody,
+    ``,
+    `--${boundary}--`,
+  ].join('\r\n');
+
+  // Base64url encode
+  const encoded = btoa(unescape(encodeURIComponent(rawEmail)))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+  // Always use 'me' — resolves to whichever Google account is authenticated
+  // (lucas@carriagehouse.nyc), which has compose access via that account's Gmail
+  const res = await fetch(
+    `https://gmail.googleapis.com/gmail/v1/users/me/drafts`,
+    {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: { raw: encoded } }),
+    }
+  );
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error('Gmail: ' + (err?.error?.message || `HTTP ${res.status}`));
+  }
+
+  const draft = await res.json();
+  return { draftId: draft.id, clientEmail, eventDesc };
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// 3. emailContract()
+//    Button handler — runs both updateCalendarHold() and
+//    createContractGmailDraft() in sequence, shows per-step status.
+// ─────────────────────────────────────────────────────────────────────────
+async function emailContract() {
+  const btn     = document.getElementById('email-contract-btn');
+  const spinner = document.getElementById('email-contract-spinner');
+  const label   = document.getElementById('email-contract-btn-text');
+
+  // ── Basic validation ───────────────────────────────────────────────────
+  if (!getVal('clientNames')) {
+    setActionStatus('error', '✕ Add client name before sending.');
+    return;
+  }
+  if (!getVal('accessStartDate') || !getVal('accessEndDate')) {
+    setActionStatus('error', '✕ Fill in access start and end dates first.');
+    return;
+  }
+
+  btn.disabled = true;
+  if (spinner) spinner.style.display = 'inline-block';
+  if (label)   label.textContent = 'Working…';
+  setActionStatus('loading', 'Updating calendar hold…');
+
+  const lines = [];
+
+  // ── Step 1: Calendar PATCH ─────────────────────────────────────────────
+  try {
+    const { startDate, startTime, endDate, endTime } = await updateCalendarHold();
+    lines.push(`✓ Calendar updated · ${fmtShortDate(startDate)} ${fmtTime(startTime)} → ${fmtShortDate(endDate)} ${fmtTime(endTime)}`);
+    setActionStatus('loading', lines.join('\n') + '\nCreating Gmail draft…');
+  } catch (err) {
+    lines.push(`✕ Calendar: ${err.message}`);
+    setActionStatus('error', lines.join('\n'));
+    btn.disabled = false;
+    if (spinner) spinner.style.display = 'none';
+    if (label)   label.textContent = 'Email Contract + Update Hold';
+    return;
+  }
+
+  // ── Step 2: Gmail draft ────────────────────────────────────────────────
+  try {
+    const { clientEmail, eventDesc } = await createContractGmailDraft();
+    const toStr = clientEmail ? ` → ${clientEmail}` : ' (no To: — add client email)';
+    lines.push(`✓ Draft saved in Gmail${toStr}`);
+    setActionStatus('success', lines.join('\n'));
+    // Open Gmail Drafts so they can review and send
+    window.open('https://mail.google.com/mail/u/0/#drafts', '_blank', 'noopener');
+  } catch (err) {
+    lines.push(`✕ Gmail: ${err.message}`);
+    setActionStatus('error', lines.join('\n'));
+  }
+
+  btn.disabled = false;
+  if (spinner) spinner.style.display = 'none';
+  if (label)   label.textContent = 'Email Contract + Update Hold';
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 
 function captureContractState() {
   const ids = ['clientNames','clientAddress','clientEmail','clientPhone',
