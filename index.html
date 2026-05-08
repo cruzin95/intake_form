@@ -132,6 +132,53 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--ink);min-
 
 @media(max-width:900px){.board{grid-template-columns:1fr}.page{padding:20px 16px 60px}}
 @media(max-width:600px){.site-header{padding:0 16px}.header-tag,.user-chip{display:none}}
+
+/* ── SORT BAR ── */
+.sort-bar{display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap}
+.sort-label{font-size:.72rem;color:var(--muted);letter-spacing:.04em}
+.sort-select{font-family:'DM Sans',sans-serif;font-size:.78rem;color:var(--ink);background:var(--card);border:1px solid var(--border);border-radius:4px;padding:5px 10px;cursor:pointer;outline:none;transition:border-color .15s}
+.sort-select:focus{border-color:var(--accent2)}
+.sort-dir{font-size:.82rem;background:var(--card);border:1px solid var(--border);border-radius:4px;padding:4px 9px;cursor:pointer;color:var(--muted);transition:all .15s;line-height:1.4}
+.sort-dir:hover{border-color:var(--accent2);color:var(--accent2)}
+
+/* ── STATS BAR ── */
+.stats-bar{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px}
+.stat-card{background:var(--card);border:1px solid var(--border);border-radius:6px;padding:12px 14px}
+.stat-value{font-family:'DM Mono',monospace;font-size:1rem;font-weight:500;color:var(--ink)}
+.stat-label{font-size:.66rem;color:var(--muted);margin-top:2px;text-transform:uppercase;letter-spacing:.07em}
+@media(max-width:700px){.stats-bar{grid-template-columns:repeat(2,1fr)}}
+
+/* ── REMINDER BANNER ── */
+.reminder-banner{background:#fff8e6;border:1px solid #f0cc6a;border-radius:6px;padding:10px 16px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:.8rem;color:#7a5c00}
+.reminder-banner strong{font-weight:600}
+.reminder-dismiss{background:none;border:none;cursor:pointer;font-size:.75rem;color:#7a5c00;opacity:.6;white-space:nowrap;font-family:'DM Sans',sans-serif;padding:0}
+.reminder-dismiss:hover{opacity:1;text-decoration:underline}
+
+/* ── STAR BUTTON ── */
+.star-btn{position:absolute;top:9px;right:9px;background:none;border:none;cursor:pointer;font-size:13px;line-height:1;color:var(--gold);opacity:.25;transition:opacity .15s,transform .1s;padding:2px;z-index:1}
+.star-btn:hover{opacity:.7;transform:scale(1.15)}
+.star-btn.active{opacity:1}
+.inquiry-card.starred{border-color:var(--gold) !important;box-shadow:0 0 0 1px var(--gold)}
+
+/* ── FOLLOW-UP INDICATOR ON CARD ── */
+.card-followup{font-size:.66rem;margin-top:6px;padding-top:6px;border-top:1px solid var(--border);color:var(--muted)}
+.card-followup.overdue{color:#c0392b;font-weight:500}
+.card-followup.due-soon{color:#b07a00;font-weight:500}
+
+/* ── FOLLOW-UP ROW IN DETAIL PANEL ── */
+.followup-row{display:flex;align-items:center;gap:8px}
+.followup-row label{font-size:.72rem;font-weight:500;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;flex-shrink:0;width:80px}
+.followup-date-input{font-family:'DM Sans',sans-serif;font-size:.82rem;color:var(--ink);background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:5px 8px;flex:1;cursor:pointer;outline:none;transition:border-color .15s}
+.followup-date-input:focus{border-color:var(--accent2)}
+.followup-clear-btn{font-size:.72rem;color:var(--muted);background:none;border:none;cursor:pointer;padding:0;flex-shrink:0}
+.followup-clear-btn:hover{color:var(--ink)}
+
+/* ── STAR ROW IN DETAIL PANEL ── */
+.star-detail-row{display:flex;align-items:center;gap:8px;padding-bottom:10px;border-bottom:1px solid var(--border);margin-bottom:2px}
+.star-detail-btn{font-size:18px;background:none;border:none;cursor:pointer;color:var(--gold);opacity:.3;transition:opacity .15s,transform .1s;padding:0;line-height:1}
+.star-detail-btn:hover{opacity:.7;transform:scale(1.1)}
+.star-detail-btn.active{opacity:1}
+.star-detail-label{font-size:.72rem;color:var(--muted);font-weight:500;text-transform:uppercase;letter-spacing:.07em}
 </style>
 </head>
 <body>
@@ -183,6 +230,24 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--ink);min-
     </div>
     <div id="error-row" class="error-banner" style="display:none"></div>
 
+    <!-- Reminder banner (shown when follow-ups are overdue) -->
+    <div class="reminder-banner" id="reminder-banner" style="display:none"></div>
+
+    <!-- Stats bar -->
+    <div class="stats-bar" id="stats-bar" style="display:none"></div>
+
+    <!-- Sort controls -->
+    <div class="sort-bar" id="sort-bar" style="display:none">
+      <span class="sort-label">Sort by</span>
+      <select class="sort-select" id="sort-select" onchange="onSortChange()">
+        <option value="dateAdded">Date added</option>
+        <option value="eventDate">Event date</option>
+        <option value="budget">Budget</option>
+        <option value="starred">Starred first</option>
+      </select>
+      <button class="sort-dir" id="sort-dir-btn" onclick="toggleSortDir()" title="Reverse sort order">↓</button>
+    </div>
+
     <div class="board" id="board">
       <div class="col">
         <div class="col-head col-new">
@@ -221,6 +286,10 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--ink);min-
       </div>
       <div class="detail-body" id="detail-body"></div>
       <div class="detail-footer">
+        <div class="star-detail-row">
+          <button class="star-detail-btn" id="star-detail-btn" onclick="toggleStarFromDetail()" title="Star this inquiry">☆</button>
+          <span class="star-detail-label" id="star-detail-label">Priority</span>
+        </div>
         <div class="status-row">
           <label>Status</label>
           <select class="status-select" id="d-status" onchange="changeStatus()">
@@ -229,6 +298,11 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--ink);min-
             <option value="contracted">Contracted</option>
             <option value="cancelled">Cancelled</option>
           </select>
+        </div>
+        <div class="followup-row">
+          <label>Follow-up</label>
+          <input type="date" class="followup-date-input" id="followup-date" onchange="saveFollowup()">
+          <button class="followup-clear-btn" onclick="clearFollowup()" title="Clear">✕</button>
         </div>
         <div class="detail-action-row">
           <button class="action-btn secondary" onclick="goToQuote()">Build Quote →</button>
@@ -271,9 +345,19 @@ const COL = {
 
 let tokenClient, accessToken = null, currentUserEmail = '', inquiries = [], selected = null;
 
+// ── SORT / STAR / FOLLOW-UP STATE ─────────────────────────────────────
+let sortBy  = 'dateAdded';
+let sortDir = 'desc'; // 'asc' | 'desc'
+let starredIds = {}; // { refId: true }
+let followups  = {}; // { refId: 'YYYY-MM-DD' }
+
 // ── INIT ──────────────────────────────────────────────────────────────
 
 window.addEventListener('load', () => {
+  // Load starred & follow-up state from localStorage
+  try { starredIds = JSON.parse(localStorage.getItem('170e_starred')   || '{}'); } catch {}
+  try { followups  = JSON.parse(localStorage.getItem('170e_followups') || '{}'); } catch {}
+
   // Handle returns from quote/contract tools
   processPendingWrites();
 
@@ -366,6 +450,9 @@ async function loadInquiries() {
 
     inquiries = rows.map((row, i) => parseRow(row, i + offset))
       .filter(inq => inq.refId && inq.refId.startsWith('EVT-'));
+
+    // Auto-prioritize high-budget inquiries (>= $15k) that haven't been touched
+    applyAutoPrioritize();
 
     // Write back any pending data (from returning from quote/contract)
     await flushPendingWrites();
@@ -493,9 +580,10 @@ function renderBoard() {
     else if (s !== 'cancelled') buckets.new.push(inq);
   });
 
-  Object.values(buckets).forEach(arr =>
-    arr.sort((a, b) => (a.eventDate || '').localeCompare(b.eventDate || ''))
-  );
+  // Sort each column
+  Object.keys(buckets).forEach(k => {
+    buckets[k] = sortInquiries(buckets[k]);
+  });
 
   ['new', 'quoted', 'contracted'].forEach(status => {
     const container = document.getElementById('cards-' + status);
@@ -509,17 +597,39 @@ function renderBoard() {
   document.querySelectorAll('.inquiry-card').forEach(card => {
     card.addEventListener('click', () => openDetail(card.dataset.ref));
   });
+
+  // Show UI chrome once data is loaded
+  const hasData = inquiries.length > 0;
+  document.getElementById('sort-bar').style.display  = hasData ? 'flex'  : 'none';
+  document.getElementById('stats-bar').style.display = hasData ? 'grid'  : 'none';
+
+  renderStats();
+  renderReminderBanner();
 }
 
 function renderCard(inq) {
-  const date  = fmtDateShort(inq.eventDate);
-  const name  = `${inq.firstName} ${inq.lastName}`.trim() || '—';
-  const ago   = timeAgo(inq.timestamp);
-  const hasQt = inq.quoteTotal && parseFloat(inq.quoteTotal) > 0;
+  const date      = fmtDateShort(inq.eventDate);
+  const name      = `${inq.firstName} ${inq.lastName}`.trim() || '—';
+  const ago       = timeAgo(inq.timestamp);
+  const hasQt     = inq.quoteTotal && parseFloat(inq.quoteTotal) > 0;
+  const isStarred = !!starredIds[inq.refId];
+  const followup  = followups[inq.refId];
+  const today     = new Date().toISOString().split('T')[0];
+  const soon      = new Date(Date.now() + 2 * 86400000).toISOString().split('T')[0];
+  const isOverdue = followup && followup < today;
+  const isDueSoon = followup && !isOverdue && followup <= soon;
 
-  return `<div class="inquiry-card" data-ref="${inq.refId}">
+  let followupHtml = '';
+  if (followup) {
+    const cls  = isOverdue ? ' overdue' : isDueSoon ? ' due-soon' : '';
+    const icon = isOverdue ? '⚠ Overdue · ' : isDueSoon ? '⏰ Due soon · ' : '📅 Follow-up · ';
+    followupHtml = `<div class="card-followup${cls}">${icon}${fmtDateShort(followup)}</div>`;
+  }
+
+  return `<div class="inquiry-card${isStarred ? ' starred' : ''}" data-ref="${escHtml(inq.refId)}">
+    <button class="star-btn${isStarred ? ' active' : ''}" onclick="toggleStar('${escHtml(inq.refId)}', event)" title="${isStarred ? 'Remove priority' : 'Mark as priority'}">${isStarred ? '★' : '☆'}</button>
     <div class="card-top">
-      <span class="card-ref">${inq.refId}</span>
+      <span class="card-ref">${escHtml(inq.refId)}</span>
       ${ago ? `<span class="card-ago">${ago}</span>` : ''}
     </div>
     <div class="card-name">${escHtml(name)}</div>
@@ -529,6 +639,7 @@ function renderCard(inq) {
       <span>${inq.guestCount || '?'} guests</span>
     </div>
     ${hasQt ? `<div class="card-quote-total">$${Number(inq.quoteTotal).toLocaleString()}</div>` : ''}
+    ${followupHtml}
     ${inq.lastUpdatedBy ? `<div style="font-size:.65rem;color:var(--muted);margin-top:6px;padding-top:6px;border-top:1px solid var(--border);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">↳ ${escHtml(inq.lastUpdatedBy)}</div>` : ''}
   </div>`;
 }
@@ -547,6 +658,18 @@ function openDetail(refId) {
   const s = selected.status || 'new';
   badge.className = `d-status-badge ${s}`;
   badge.textContent = s.charAt(0).toUpperCase() + s.slice(1);
+
+  // Sync star button
+  const isStarred = !!starredIds[selected.refId];
+  const starBtn   = document.getElementById('star-detail-btn');
+  const starLabel = document.getElementById('star-detail-label');
+  starBtn.textContent = isStarred ? '★' : '☆';
+  starBtn.className   = 'star-detail-btn' + (isStarred ? ' active' : '');
+  starLabel.textContent = isStarred ? 'Priority — starred' : 'Mark as priority';
+
+  // Sync follow-up date
+  const fuInput = document.getElementById('followup-date');
+  fuInput.value = followups[selected.refId] || '';
 
   document.getElementById('detail-body').innerHTML = renderDetailBody(selected);
   document.getElementById('detail-overlay').classList.remove('hidden');
@@ -737,6 +860,192 @@ function handleAuthExpired() {
   showError('Your session expired. Please sign in again.');
   document.getElementById('app').style.display = 'none';
   document.getElementById('auth-screen').style.display = 'flex';
+}
+
+// ── AUTO-PRIORITIZE ──────────────────────────────────────────────────
+// Auto-stars any inquiry whose max budget is >= $15,000, but ONLY if the
+// user has never explicitly starred or unstarred it. Manual unstars (false)
+// are respected and never re-applied.
+const AUTO_PRIORITIZE_THRESHOLD = 15000;
+
+function applyAutoPrioritize() {
+  let changed = false;
+  inquiries.forEach(inq => {
+    if (starredIds[inq.refId] === undefined) {
+      const maxBudget = parseMaxBudget(inq.budget);
+      if (maxBudget >= AUTO_PRIORITIZE_THRESHOLD) {
+        starredIds[inq.refId] = true;
+        changed = true;
+      }
+    }
+  });
+  if (changed) localStorage.setItem('170e_starred', JSON.stringify(starredIds));
+}
+
+// ── SORT ─────────────────────────────────────────────────────────────
+
+// Extract the maximum dollar value from a budget string.
+// Handles ranges, "k" suffix, commas, "+" suffix, and free-form text.
+//   "$10,000-$15,000" → 15000
+//   "$15k-$25k"       → 25000
+//   "$50,000+"        → 50000
+//   "Under $5,000"    → 5000
+//   "Not sure"        → 0
+function parseMaxBudget(s) {
+  if (!s) return 0;
+  const cleaned = String(s).replace(/,/g, '').toLowerCase();
+  const matches = cleaned.match(/\d+(?:\.\d+)?\s*k?/g) || [];
+  const nums = matches.map(m => {
+    const isK = /k\s*$/.test(m);
+    const n   = parseFloat(m);
+    return isK ? n * 1000 : n;
+  });
+  return nums.length ? Math.max(...nums) : 0;
+}
+
+function sortInquiries(arr) {
+  const dir = sortDir === 'asc' ? 1 : -1;
+  return [...arr].sort((a, b) => {
+    if (sortBy === 'starred') {
+      // Starred first, then by dateAdded descending within each group
+      const sd = (starredIds[b.refId] ? 1 : 0) - (starredIds[a.refId] ? 1 : 0);
+      if (sd !== 0) return sd;
+      return (b.timestamp || '').localeCompare(a.timestamp || '');
+    }
+    if (sortBy === 'eventDate') {
+      const cmp = (a.eventDate || '').localeCompare(b.eventDate || '');
+      return cmp !== 0 ? cmp * dir : 0;
+    }
+    if (sortBy === 'budget') {
+      return (parseMaxBudget(b.budget) - parseMaxBudget(a.budget)) * dir;
+    }
+    // dateAdded (default)
+    return (b.timestamp || '').localeCompare(a.timestamp || '') * dir;
+  });
+}
+
+function onSortChange() {
+  sortBy = document.getElementById('sort-select').value;
+  // 'starred' mode has no meaningful asc/desc direction — hide the button
+  document.getElementById('sort-dir-btn').style.visibility = sortBy === 'starred' ? 'hidden' : 'visible';
+  renderBoard();
+}
+
+function toggleSortDir() {
+  sortDir = sortDir === 'desc' ? 'asc' : 'desc';
+  document.getElementById('sort-dir-btn').textContent = sortDir === 'asc' ? '↑' : '↓';
+  renderBoard();
+}
+
+// ── STARS ────────────────────────────────────────────────────────────
+// State values:
+//   starredIds[refId] === true       → starred (manually OR auto)
+//   starredIds[refId] === false      → explicitly unstarred (won't re-auto-star)
+//   starredIds[refId] === undefined  → never seen (eligible for auto-prioritize)
+
+function toggleStar(refId, e) {
+  e.stopPropagation();
+  starredIds[refId] = !starredIds[refId];
+  localStorage.setItem('170e_starred', JSON.stringify(starredIds));
+  renderBoard();
+  // Sync detail panel star if open for this card
+  if (selected && selected.refId === refId) syncDetailStar(refId);
+}
+
+function toggleStarFromDetail() {
+  if (!selected) return;
+  const refId = selected.refId;
+  starredIds[refId] = !starredIds[refId];
+  localStorage.setItem('170e_starred', JSON.stringify(starredIds));
+  syncDetailStar(refId);
+  renderBoard();
+}
+
+function syncDetailStar(refId) {
+  const isStarred = !!starredIds[refId];
+  const btn   = document.getElementById('star-detail-btn');
+  const label = document.getElementById('star-detail-label');
+  if (!btn) return;
+  btn.textContent  = isStarred ? '★' : '☆';
+  btn.className    = 'star-detail-btn' + (isStarred ? ' active' : '');
+  label.textContent = isStarred ? 'Priority — starred' : 'Mark as priority';
+}
+
+// ── FOLLOW-UPS ───────────────────────────────────────────────────────
+
+function saveFollowup() {
+  if (!selected) return;
+  const val = document.getElementById('followup-date').value;
+  if (val) followups[selected.refId] = val;
+  else delete followups[selected.refId];
+  localStorage.setItem('170e_followups', JSON.stringify(followups));
+  renderBoard();
+  renderReminderBanner();
+  showToast(val ? 'Follow-up saved' : 'Follow-up cleared');
+}
+
+function clearFollowup() {
+  if (!selected) return;
+  delete followups[selected.refId];
+  localStorage.setItem('170e_followups', JSON.stringify(followups));
+  document.getElementById('followup-date').value = '';
+  renderBoard();
+  renderReminderBanner();
+  showToast('Follow-up cleared');
+}
+
+function renderReminderBanner() {
+  const today  = new Date().toISOString().split('T')[0];
+  const banner = document.getElementById('reminder-banner');
+  const overdue = inquiries.filter(i =>
+    followups[i.refId] &&
+    followups[i.refId] <= today &&
+    i.status !== 'cancelled' &&
+    i.status !== 'contracted'
+  );
+  if (!overdue.length) { banner.style.display = 'none'; return; }
+  const names = overdue.slice(0, 3).map(i => escHtml(`${i.firstName} ${i.lastName}`.trim())).join(', ');
+  const extra = overdue.length > 3 ? ` +${overdue.length - 3} more` : '';
+  banner.style.display = 'flex';
+  banner.innerHTML = `
+    <span>📅 <strong>${overdue.length} follow-up${overdue.length > 1 ? 's' : ''} due</strong> — ${names}${extra}</span>
+    <button class="reminder-dismiss" onclick="this.closest('.reminder-banner').style.display='none'">Dismiss</button>
+  `;
+}
+
+// ── STATS ────────────────────────────────────────────────────────────
+
+function renderStats() {
+  const active      = inquiries.filter(i => i.status !== 'cancelled');
+  const contracted  = active.filter(i => i.status === 'contracted');
+  const quoted      = active.filter(i => i.status === 'quoted');
+  const withQuote   = [...quoted, ...contracted];
+
+  const pipelineVal    = withQuote.reduce((s, i) => s + (parseFloat(i.quoteTotal) || 0), 0);
+  const contractedVal  = contracted.reduce((s, i) => s + (parseFloat(i.quoteTotal) || 0), 0);
+  const convRate       = active.length ? Math.round((contracted.length / active.length) * 100) : 0;
+  const starred        = Object.keys(starredIds).filter(id => starredIds[id] && inquiries.some(i => i.refId === id)).length;
+
+  const fmt = n => '$' + Math.round(n).toLocaleString('en-US');
+
+  document.getElementById('stats-bar').innerHTML = `
+    <div class="stat-card">
+      <div class="stat-value">${active.length}</div>
+      <div class="stat-label">Active inquiries</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">${fmt(pipelineVal)}</div>
+      <div class="stat-label">Pipeline value</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">${fmt(contractedVal)}</div>
+      <div class="stat-label">Contracted</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">${convRate}%</div>
+      <div class="stat-label">Conversion rate</div>
+    </div>
+  `;
 }
 
 let toastTimer;

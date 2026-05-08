@@ -178,6 +178,57 @@
     margin-top: 2px;
   }
 
+  /* ── PAYMENT METHODS REFERENCE PANEL ── */
+  .payment-methods-panel {
+    margin-top: 22px;
+    background: #fafafc;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--gold);
+    border-radius: 3px;
+    padding: 14px 18px 16px;
+  }
+  .pm-title {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.65rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink2);
+    font-weight: 500;
+    margin-bottom: 10px;
+  }
+  .pm-subtitle {
+    color: var(--muted);
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: 0.02em;
+    margin-left: 4px;
+  }
+  .pm-row {
+    display: grid;
+    grid-template-columns: 130px 1fr;
+    gap: 14px;
+    padding: 7px 0;
+    align-items: baseline;
+    font-size: 0.82rem;
+  }
+  .pm-row + .pm-row {
+    border-top: 1px solid var(--border);
+  }
+  .pm-label {
+    color: var(--ink2);
+    font-weight: 500;
+  }
+  .pm-detail {
+    color: var(--ink);
+    font-family: 'DM Mono', monospace;
+    font-size: 0.78rem;
+    line-height: 1.5;
+  }
+  .pm-detail strong {
+    font-weight: 600;
+    color: var(--accent2);
+  }
+
   .divider {
     height: 1px;
     background: var(--border);
@@ -540,10 +591,41 @@
             <select id="paymentMethod">
               <option value="ACH Transfer">ACH Transfer</option>
               <option value="Wire Transfer">Wire Transfer</option>
-              <option value="Certified Check">Certified Check</option>
+              <option value="Personal Check">Personal Check</option>
+              <option value="Cashier's Check">Cashier's Check</option>
               <option value="Zelle">Zelle</option>
-              <option value="Cash">Cash</option>
+              <option value="Venmo">Venmo</option>
+              <option value="Credit Card">Credit Card (+3.5% fee)</option>
             </select>
+          </div>
+        </div>
+
+        <!-- ─── Payment methods reference panel ─── -->
+        <div class="payment-methods-panel">
+          <div class="pm-title">Accepted Payment Methods <span class="pm-subtitle">— included in generated contract</span></div>
+          <div class="pm-row">
+            <span class="pm-label">Zelle / Venmo</span>
+            <span class="pm-detail">170eldridge@gmail.com</span>
+          </div>
+          <div class="pm-row">
+            <span class="pm-label">Personal Check</span>
+            <span class="pm-detail">Made payable to <strong>170 Eldridge LLC</strong></span>
+          </div>
+          <div class="pm-row">
+            <span class="pm-label">Cashier's Check</span>
+            <span class="pm-detail">Made payable to <strong>170 Eldridge LLC</strong></span>
+          </div>
+          <div class="pm-row">
+            <span class="pm-label">ACH Transfer</span>
+            <span class="pm-detail">Wells Fargo &middot; Routing <strong>102307164</strong> &middot; Account <strong>3685727525</strong></span>
+          </div>
+          <div class="pm-row">
+            <span class="pm-label">Wire Transfer</span>
+            <span class="pm-detail">Wells Fargo &middot; Routing <strong>121000248</strong> &middot; Account <strong>3685727525</strong></span>
+          </div>
+          <div class="pm-row">
+            <span class="pm-label">Credit Card</span>
+            <span class="pm-detail">Subject to a 3.5% processing fee</span>
           </div>
         </div>
       </div>
@@ -962,6 +1044,35 @@ async function generateContract() {
       });
     }
 
+    // ── Accepted payment methods table ──
+    function paymentMethodsTable() {
+      const hdr = (t) => new Paragraph({ children:[new TextRun({text:t, font:"Arial", size:21, bold:true, color:"FFFFFF"})] });
+      const cellL = (children, shade="FFFFFF", w=2400) => new TableCell({
+        borders:allB, width:{size:w,type:WidthType.DXA},
+        shading:{fill:shade,type:ShadingType.CLEAR},
+        margins:{top:80,bottom:80,left:140,right:140},
+        children
+      });
+      const row = (method, details, shade="FFFFFF") => new TableRow({ children:[
+        cellL([new Paragraph({children:[B(method)]})], shade, 2400),
+        cellL([new Paragraph({children: Array.isArray(details) ? details : [R(details)]})], shade, 6960)
+      ]});
+      return new Table({ width:{size:9360,type:WidthType.DXA}, columnWidths:[2400,6960],
+        rows:[
+          new TableRow({ children:[
+            new TableCell({ borders:allB, width:{size:2400,type:WidthType.DXA}, shading:{fill:"1A1A2E",type:ShadingType.CLEAR}, margins:{top:100,bottom:100,left:140,right:140}, children:[hdr("Method")] }),
+            new TableCell({ borders:allB, width:{size:6960,type:WidthType.DXA}, shading:{fill:"1A1A2E",type:ShadingType.CLEAR}, margins:{top:100,bottom:100,left:140,right:140}, children:[hdr("Details")] })
+          ]}),
+          row("Zelle / Venmo",     "170eldridge@gmail.com",                                                                            "FAFAFA"),
+          row("Personal Check",    [R("Made payable to "), B("170 Eldridge LLC")],                                                     "FFFFFF"),
+          row("Cashier's Check",   [R("Made payable to "), B("170 Eldridge LLC")],                                                     "FAFAFA"),
+          row("ACH Transfer",      [R("Wells Fargo  ·  Routing "), B("102307164"), R("  ·  Account "), B("3685727525")],                "FFFFFF"),
+          row("Wire Transfer",     [R("Wells Fargo  ·  Routing "), B("121000248"), R("  ·  Account "), B("3685727525")],                "FAFAFA"),
+          row("Credit Card",       "Subject to a 3.5% processing fee",                                                                  "FFFFFF"),
+        ]
+      });
+    }
+
     // ── Build children array ──
     const children = [
       sp(80,80),
@@ -1064,8 +1175,10 @@ async function generateContract() {
       sec("10","Fees, Payment & Security Deposit"),
       payTable(),
       sp(120,60),
-      para([R("All amounts set forth above are due and payable in full no later than "), B(fmtDate(payDue)), R(". Payment shall be made via "), B(payMethod), R(" to the account details provided separately by the Licensor. The Licensor reserves the right to cancel this Agreement and deny access to the Venue if full payment has not been received by the due date.")]),
-      sp(80,60),
+      para([R("All amounts set forth above are due and payable in full no later than "), B(fmtDate(payDue)), R(". Payment shall be made via "), B(payMethod), R(". The Client may remit payment using any of the methods set forth in the table below. The Licensor reserves the right to cancel this Agreement and deny access to the Venue if full payment has not been received by the due date.")]),
+      sp(120,40),
+      paymentMethodsTable(),
+      sp(120,60),
       para([B("Security Deposit: "), R(`The Security Deposit of ${fmtMoney(secDep)} shall be held by the Licensor as security for the performance of the Client's obligations under this Agreement. Subject to any deductions, the Security Deposit shall be returned to the Client no later than `), B(fmtDate(depReturn)), R(". The Licensor may deduct from the Security Deposit the cost of: (i) any damage to the Venue or its contents caused by the Client or their guests; (ii) any additional cleaning required beyond normal post-event standards; and (iii) any other costs or expenses incurred by the Licensor as a result of the Client's breach of this Agreement or any costs beyond those outlined in the original quote. The Licensor shall provide the Client with an itemized statement of any deductions.")]),
 
       // §11 Damage
